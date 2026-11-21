@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Not Asistanı Mobil</title>
+  <meta name="description" content="Yazılı sınav puanlarını telefonda hazırlayın, QR kod ile bilgisayardaki Yazılı Not Asistanı'na aktarın.">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="../assets/icons/icon192.png">
+  <link rel="apple-touch-icon" href="../assets/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Not Asistanı">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="../ui/qr-ui.css">
+  <script src="../vendor/qrcode-generator.js"></script>
+  <script src="../vendor/jsQR.js"></script>
+</head>
+<body>
+  <!-- ============================================================ ANA SAYFA -->
+  <section class="view" id="vHome">
+    <header class="bar">
+      <img src="../assets/icons/icon192.png" alt="" width="32" height="32">
+      <div class="bar-title"><b>Not Asistanı</b><small>Mobil puan girişi</small></div>
+    </header>
+    <main class="pad">
+      <div class="consent" id="consent" hidden>
+        <p><b>Puanlar bu telefonda saklansın mı?</b><br>
+          Öğrenci listesi ve puanlar yalnızca bu cihazda tutulur, hiçbir sunucuya gönderilmez. İzin vermezseniz uygulama kapanınca veriler silinir.</p>
+        <div class="row"><button class="primary" id="consentYes">Evet, bu telefonda sakla</button><button id="consentNo">Şimdilik hayır</button></div>
+      </div>
+      <p class="memory-warn" id="memoryWarn" hidden>⚠ Veriler kaydedilmiyor (yalnızca bu oturum). <button class="link" id="consentAsk">Saklamayı aç</button></p>
+
+      <div class="actions-big">
+        <button class="primary big" id="btnScanList">📷 Listeyi QR ile al<small>Bilgisayardaki panelden</small></button>
+        <button class="big" id="btnManual">✍ Elle oluştur<small>Okul no ve soru puanlarını yazarak</small></button>
+      </div>
+
+      <h2>Sınavlarım</h2>
+      <div id="examList" class="exam-list"></div>
+
+      <div class="install" id="install" hidden></div>
+
+      <details class="help">
+        <summary>Nasıl kullanılır?</summary>
+        <ol>
+          <li>Bilgisayarda e-Okul'u açın; Yazılı Not Asistanı panelinde <b>e-Okul listesini tabloya al</b>, sonra <b>📲 Listeyi telefona gönder</b>'e basın.</li>
+          <li>Burada <b>📷 Listeyi QR ile al</b>'a basıp ekrandaki koda kamerayı tutun.</li>
+          <li>Kâğıtları okurken puanları büyük tuşlarla girin. Sınava girmeyen öğrenci için <b>G</b>.</li>
+          <li>Bitince <b>📤 Bilgisayara gönder</b>: bilgisayarda panelde <b>📷 Telefondan al (QR)</b>'a basıp telefon ekranını kameraya gösterin.</li>
+          <li>Bilgisayarda kontrol edip <b>e-Okul'a Puanları Aktar</b> → e-Okul'da <b>Kaydet</b>.</li>
+        </ol>
+      </details>
+      <p class="foot">🔒 Veriler yalnızca bu cihazda işlenir. Kamera görüntüsü hiçbir yere gönderilmez.</p>
+    </main>
+  </section>
+
+  <!-- ============================================================ ELLE OLUŞTUR -->
+  <section class="view" id="vSetup" hidden>
+    <header class="bar"><button class="back" data-go="home" aria-label="Geri">‹</button><div class="bar-title"><b>Elle sınav oluştur</b></div></header>
+    <main class="pad">
+      <form id="setupForm" class="form">
+        <label>Sınıf / Şube<input name="sinifSube" placeholder="ör. 9/B" autocomplete="off"></label>
+        <label>Ders<input name="ders" placeholder="ör. Matematik" autocomplete="off"></label>
+        <label>Sınav<input name="sinav" placeholder="ör. 1. Dönem 1. Yazılı" autocomplete="off"></label>
+        <label>Soru maksimum puanları <small>(virgülle, sırayla)</small><input name="maxes" inputmode="numeric" placeholder="20,10,10,20,10,10,10,10" autocomplete="off"></label>
+        <label class="check"><input type="checkbox" name="integerOnly" checked> Yalnızca tam sayı puan (e-Okul böyle kabul ediyor)</label>
+        <label>Öğrenciler <small>(her satıra: okul no ve ad soyad)</small>
+          <textarea name="students" rows="8" placeholder="521 Berken Acar&#10;522 Ayşe Yılmaz&#10;523"></textarea></label>
+        <p class="form-err" id="setupErr" role="alert"></p>
+        <button class="primary big" type="submit">Oluştur ve puan girmeye başla</button>
+      </form>
+    </main>
+  </section>
+
+  <!-- ============================================================ PUAN GİRİŞİ -->
+  <section class="view entry" id="vEntry" hidden>
+    <header class="bar">
+      <button class="back" data-go="home" aria-label="Sınavlar">‹</button>
+      <div class="bar-title"><b id="eTitle"></b><small id="eSub"></small></div>
+      <button class="tool" data-go="list" aria-label="Liste">📋</button>
+      <button class="tool" data-go="send" aria-label="Bilgisayara gönder">📤</button>
+    </header>
+    <div class="mode" role="tablist">
+      <button data-mode="student" class="on" role="tab">Öğrenci öğrenci →</button>
+      <button data-mode="question" role="tab">Soru soru ↓</button>
+    </div>
+    <div class="stu">
+      <button class="nav" id="prevStu" aria-label="Önceki öğrenci">‹</button>
+      <div class="stu-info"><b id="stuNo"></b><span id="stuName"></span><small id="stuPos"></small></div>
+      <button class="nav" id="nextStu" aria-label="Sonraki öğrenci">›</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="display" id="display" aria-live="polite">
+      <div class="d-label" id="dLabel"></div>
+      <div class="d-value" id="dValue"></div>
+      <div class="d-msg" id="dMsg"></div>
+    </div>
+    <div class="keypad" id="keypad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="back" class="fn" aria-label="Sil">⌫</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button data-k="G" class="fn g" aria-label="Sınava girmedi">G</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button data-k="empty" class="fn small">Boş</button>
+      <button data-k="dot" class="fn" id="kDot" aria-label="Ondalık">,</button><button data-k="0">0</button><button data-k="next" class="next">İleri ›</button>
+    </div>
+  </section>
+
+  <!-- ============================================================ LİSTE -->
+  <section class="view" id="vList" hidden>
+    <header class="bar"><button class="back" data-go="entry" aria-label="Geri">‹</button><div class="bar-title"><b>Öğrenci listesi</b><small id="lSub"></small></div>
+      <button class="tool" data-go="send" aria-label="Bilgisayara gönder">📤</button></header>
+    <div class="chipsum" id="lSum"></div>
+    <div class="table-wrap"><table class="list" id="lTable"></table></div>
+  </section>
+
+  <!-- ============================================================ GÖNDER -->
+  <section class="view" id="vSend" hidden>
+    <header class="bar"><button class="back" data-go="entry" aria-label="Geri">‹</button><div class="bar-title"><b>Bilgisayara gönder</b><small id="sSub"></small></div></header>
+    <main class="pad">
+      <div class="chipsum" id="sSum"></div>
+      <div id="sWarn"></div>
+      <ol class="steps-mini">
+        <li>Bilgisayarda Yazılı Not Asistanı panelinde <b>📷 Telefondan al (QR)</b>'a basın.</li>
+        <li>Telefon ekranını bilgisayarın kamerasına gösterin. Ekran parlaklığını artırın.</li>
+      </ol>
+      <div id="qrHost"></div>
+      <p class="hint">Kodda yalnızca okul numaraları ve puanlar var; öğrenci adları gönderilmez.</p>
+      <h3>Kamera yoksa</h3>
+      <button class="big" id="btnShareCsv">📄 CSV dosyası olarak paylaş<small>E-posta, Drive vb. ile bilgisayara gönderip panelde "CSV / TSV yükle"</small></button>
+    </main>
+  </section>
+
+  <div id="toast" role="status"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
