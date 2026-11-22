@@ -129,3 +129,19 @@ dialog.ask { border: 0; border-radius: 14px; padding: 16px; width: min(420px, ca
 dialog.ask::backdrop { background: rgba(15, 23, 42, .5); }
 dialog.ask h3 { margin: 0 0 8px; }
 dialog.ask .row { margin-top: 14px; justify-content: flex-end; }
+
+/* Elle oluştur: not türü */
+.form fieldset.ntype { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.form fieldset.ntype legend { font-weight: 600; font-size: 14px; margin-bottom: 4px; padding: 0; }
+.form fieldset.ntype label { display: flex; gap: 6px; align-items: flex-start; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px; background: #fff; font-weight: 400; }
+.form fieldset.ntype label:has(input:checked) { border-color: var(--brand); background: #eff6ff; }
+.form fieldset.ntype input { width: auto; margin-top: 3px; }
+.form fieldset.ntype b { display: block; font-size: 14px; }
+.form fieldset.ntype small { display: block; }
+#setupOyss { display: grid; gap: 12px; }
+.form .lbl { font-weight: 600; font-size: 14px; margin: 0 0 6px; }
+.form .lbl small { font-weight: 400; color: var(--muted); }
+.dn-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.form .dn-list label { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; border: 1px solid var(--line); border-radius: 99px; padding: 6px 10px 6px 6px; background: #fff; }
+.form .dn-list label:has(input:checked) { border-color: var(--brand); background: #eff6ff; }
+.form .dn-list input { width: auto; }

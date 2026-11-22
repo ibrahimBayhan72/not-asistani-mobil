@@ -65,10 +65,21 @@
         <label>Sınıf / Şube<input name="sinifSube" placeholder="ör. 9/B" autocomplete="off"></label>
         <label>Ders<input name="ders" placeholder="ör. Matematik" autocomplete="off"></label>
         <label>Sınav<input name="sinav" placeholder="ör. 1. Dönem 1. Yazılı" autocomplete="off"></label>
-        <label>Soru maksimum puanları <small>(virgülle, sırayla)</small><input name="maxes" inputmode="numeric" placeholder="20,10,10,20,10,10,10,10" autocomplete="off"></label>
-        <label class="check"><input type="checkbox" name="integerOnly" checked> Yalnızca tam sayı puan (e-Okul böyle kabul ediyor)</label>
+        <fieldset class="ntype">
+          <legend>Not türü</legend>
+          <label><input type="radio" name="ntype" value="oyss" checked> <span><b>📝 OYSS yazılı</b><small>Soru bazlı puan</small></span></label>
+          <label><input type="radio" name="ntype" value="dersnotu"> <span><b>📚 Ders notu</b><small>Sınav, performans, uygulama</small></span></label>
+        </fieldset>
+        <div id="setupOyss">
+          <label>Soru maksimum puanları <small>(virgülle, sırayla)</small><input name="maxes" inputmode="numeric" placeholder="20,10,10,20,10,10,10,10" autocomplete="off"></label>
+          <label class="check"><input type="checkbox" name="integerOnly" checked> Yalnızca tam sayı puan (e-Okul böyle kabul ediyor)</label>
+        </div>
+        <div id="setupDN" hidden>
+          <p class="lbl">Not sütunları <small>(e-Okul'da açık olanları seçin; her not 0–100 tam sayı)</small></p>
+          <div class="dn-list" id="setupDnList"></div>
+        </div>
         <label>Öğrenciler <small>(her satıra: okul no ve ad soyad)</small>
-          <textarea name="students" rows="8" placeholder="521 Berken Acar&#10;522 Ayşe Yılmaz&#10;523"></textarea></label>
+          <textarea name="students" rows="8" placeholder="521 Ali Yılmaz&#10;522 Ayşe Kaya&#10;523"></textarea></label>
         <p class="form-err" id="setupErr" role="alert"></p>
         <button class="primary big" type="submit">Oluştur ve puan girmeye başla</button>
       </form>

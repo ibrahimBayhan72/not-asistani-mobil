@@ -238,22 +238,44 @@ async function receiveList(text) {
 }
 
 // ------------------------------------------------------------------ elle oluştur
+// e-Okul "Ders Notu Girişi" sütunları
+const DN_ALL = ['1.Sınav', '2.Sınav', '3.Sınav', '4.Sınav', '5.Sınav', '6.Sınav', '1.Perf.', '2.Perf.', '3.Perf.', '1.Uyg.', '2.Uyg.', '3.Uyg.', 'Proje'];
+const DN_DEFAULT = ['1.Sınav', '2.Sınav', '1.Perf.', '2.Perf.'];
+$('#setupDnList').innerHTML = DN_ALL.map((l) => `<label><input type="checkbox" name="dncol" value="${esc(l)}"${DN_DEFAULT.includes(l) ? ' checked' : ''}>${esc(l)}</label>`).join('');
+const setupMode = () => (document.querySelector('#setupForm input[name=ntype]:checked') || {}).value || 'oyss';
+function renderSetupMode() {
+  const dn = setupMode() === 'dersnotu';
+  $('#setupOyss').hidden = dn;
+  $('#setupDN').hidden = !dn;
+  $('#setupErr').textContent = '';
+}
+document.querySelectorAll('#setupForm input[name=ntype]').forEach((r) => r.addEventListener('change', renderSetupMode));
+
 $('#btnManual').onclick = () => {
   $('#setupErr').textContent = '';
+  renderSetupMode();
   go('setup');
 };
 $('#setupForm').onsubmit = (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   const errs = [];
-  const maxText = String(f.get('maxes') || '').trim();
-  const questions = maxText
-    .split(/[,;\s]+/)
-    .filter(Boolean)
-    .map((x) => ({ max: parseScore(x).value }));
-  const qv = validateQuestions(questions);
-  if (!maxText) errs.push('Soru maksimum puanlarını yazın (ör. 20,10,10,20,10,10,10,10).');
-  else errs.push(...qv.errors);
+  const mode = setupMode();
+  let questions;
+  if (mode === 'dersnotu') {
+    const cols = f.getAll('dncol').map(String);
+    questions = DN_ALL.filter((l) => cols.includes(l)).map((label) => ({ max: 100, label }));
+    if (!questions.length) errs.push('En az bir not sütunu seçin.');
+  } else {
+    const maxText = String(f.get('maxes') || '').trim();
+    questions = maxText
+      .split(/[,;\s]+/)
+      .filter(Boolean)
+      .map((x) => ({ max: parseScore(x).value }));
+    const qv = validateQuestions(questions);
+    if (!maxText) errs.push('Soru maksimum puanlarını yazın (ör. 20,10,10,20,10,10,10,10).');
+    else errs.push(...qv.errors);
+  }
   const students = [];
   const seen = new Set();
   String(f.get('students') || '')
@@ -278,13 +300,15 @@ $('#setupForm').onsubmit = (e) => {
     updated: Date.now(),
     exam: { sinifSube: String(f.get('sinifSube') || '').trim(), ders: String(f.get('ders') || '').trim(), sinav: String(f.get('sinav') || '').trim() },
     fingerprint: '',
-    integerOnly: !!f.get('integerOnly'),
+    integerOnly: mode === 'dersnotu' || !!f.get('integerOnly'),
+    mode,
     questions,
     students,
   };
   store.data.exams.push(exam);
   store.save();
   e.target.reset();
+  renderSetupMode();
   openExam(exam.id);
 };
 
