@@ -1,6 +1,6 @@
 // Çevrimdışı çalışma: uygulama dosyalarını önbellekte tutar (öğrenci verisi önbelleğe GİRMEZ;
 // o yalnızca localStorage'dadır). Ağ isteği yalnızca uygulama dosyalarının güncellenmesi içindir.
-const CACHE = 'yna-mobil-v3'; // dosyalar değişince artırın
+const CACHE = 'yna-mobil-v5'; // dosyalar değişince artırın
 const ASSETS = [
   './',
   'index.html',
@@ -22,7 +22,13 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache:'reload' → tarayıcının HTTP önbelleğindeki eski kopyayı değil, sunucudaki güncel dosyayı al
+  e.waitUntil(
+    caches
+      .open(CACHE)
+      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -41,7 +47,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const hit = await cache.match(req, { ignoreSearch: true });
-      const net = fetch(req)
+      const net = fetch(req, { cache: 'no-cache' }) // arka plan güncellemesi sunucuya sorar
         .then((res) => {
           if (res.ok) cache.put(req, res.clone());
           return res;
