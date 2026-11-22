@@ -315,7 +315,8 @@ $('#setupForm').onsubmit = (e) => {
 // ------------------------------------------------------------------ puan girişi
 const Q = () => current.questions.length;
 const stu = () => current.students[cur.r];
-const isAbsentRow = (s) => s.scores.some(isAbsentMark);
+// OYSS: G satırın tamamı içindir. Ders notunda G kutu bazındadır (satır "girmedi" sayılmaz).
+const isAbsentRow = (s) => current.mode !== 'dersnotu' && s.scores.some(isAbsentMark);
 
 function setMode(mode) {
   cur.mode = mode;
@@ -427,7 +428,17 @@ async function press(k) {
   const max = current.questions[cur.q].max;
   if (k === 'next') return advance();
   if (k === 'G') {
-    if (current.mode === 'dersnotu' && !isAbsentRow(s)) return reject('Ders Notu ekranında G (sınava girmedi) kullanılmaz; kutuyu boş bırakın.');
+    // Ders notu: G yalnızca bu kutuya (ör. 1.Sınav) yazılır; aynı kutuda tekrar G → kaldır
+    if (current.mode === 'dersnotu') {
+      const wasG = isAbsentMark(s.scores[cur.q]);
+      setCell(wasG ? '' : ABSENT_MARK);
+      buzz(15);
+      if (wasG) {
+        cur.fresh = true;
+        return renderEntry('G kaldırıldı.');
+      }
+      return advance();
+    }
     if (isAbsentRow(s)) {
       s.scores = Array(Q()).fill('');
       touch();
@@ -469,7 +480,7 @@ async function press(k) {
     return renderEntry();
   }
   if (!/^\d$/.test(k)) return;
-  let cand = cur.fresh || curVal === '0' ? k : curVal + k;
+  let cand = cur.fresh || curVal === '0' || isAbsentMark(curVal) ? k : curVal + k;
   if (curVal.includes('.') && !cur.fresh) {
     if (curVal.split('.')[1].length >= 2) return reject('En fazla 2 ondalık basamak.');
     cand = curVal + k;

@@ -52,14 +52,22 @@ export function validateQuestions(questions, { mode = 'oyss' } = {}) {
 export function validateStudent(student, questions, opts = {}) {
   const mode = opts.mode || 'oyss';
   const scores = student.scores || [];
-  // Ders notu ekranında "sınava girmedi" işareti yoktur
-  if (mode === 'dersnotu' && questions.some((_, i) => isAbsentMark(scores[i]))) {
-    const cells = questions.map((q, i) => {
-      const raw = String(scores[i] ?? '').trim();
-      if (isAbsentMark(raw)) return { status: 'error', value: null, message: 'Ders notunda G kullanılamaz; boş bırakın' };
-      return validateScore(raw, q.max, opts);
-    });
-    return { cells, total: 0, filled: 0, missing: 0, errors: ['Ders notu ekranında G (girmedi) kullanılamaz; o kutuyu boş bırakın'], status: 'error' };
+  // Ders notu ekranında G kutu bazındadır: e-Okul "mazeretsiz girmeyen öğrencinin sınav, proje ve performans
+  // notu bölümüne G yazılır" diyor. G'li kutu not sayılmaz (ortalamaya girmez) ama boş da sayılmaz.
+  if (mode === 'dersnotu') {
+    const cells = questions.map((q, i) =>
+      isAbsentMark(scores[i]) ? { status: 'absent', value: null, message: 'Girmedi (G)' } : validateScore(scores[i], q.max, opts)
+    );
+    const { total, filled } = studentTotal(scores.map((v) => (isAbsentMark(v) ? '' : v)));
+    const gCount = cells.filter((c) => c.status === 'absent').length;
+    const errors = [];
+    cells.forEach((c, i) => c.status === 'error' && errors.push(`${colName(questions[i], i)}: ${c.message}`));
+    const missing = cells.filter((c) => c.status === 'empty').length;
+    let status = 'ok';
+    if (errors.length) status = 'error';
+    else if (filled + gCount === 0) status = 'empty';
+    else if (missing) status = 'incomplete';
+    return { cells, total, filled, missing, errors, status, gCount };
   }
   // Sınava girmedi (G): satırda başka puan olmamalı
   if (questions.some((_, i) => isAbsentMark(scores[i]))) {
