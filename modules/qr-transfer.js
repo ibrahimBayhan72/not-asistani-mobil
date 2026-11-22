@@ -42,13 +42,18 @@ const clean = (s) => String(s ?? '').replace(/[\t\r\n]+/g, ' ').trim();
 const maxesText = (questions) => questions.map((q) => (Number.isFinite(q.max) ? q.max : '')).join(',');
 const parseMaxes = (t) => (t || '').split(',').filter((x, i, a) => a.length > 1 || x !== '').map((x) => ({ max: x === '' ? NaN : Number(x) }));
 
-function header(exam = {}, fingerprint = '', questions = []) {
-  return ['v1', `s\t${clean(exam.sinifSube)}`, `d\t${clean(exam.ders)}`, `n\t${clean(exam.sinav)}`, `f\t${clean(fingerprint)}`, `m\t${maxesText(questions)}`];
+// k: ekran türü (oyss | dersnotu), l: sütun adları ("1.Sınav|2.Perf.") — eski QR'larda yoksa OYSS sayılır
+function header(exam = {}, fingerprint = '', questions = [], mode = 'oyss') {
+  const lines = ['v1', `s\t${clean(exam.sinifSube)}`, `d\t${clean(exam.ders)}`, `n\t${clean(exam.sinav)}`, `f\t${clean(fingerprint)}`, `m\t${maxesText(questions)}`];
+  if (mode === 'dersnotu') lines.push('k\tdersnotu');
+  if (questions.some((q) => q.label)) lines.push(`l\t${questions.map((q) => clean(q.label).replace(/\|/g, '/')).join('|')}`);
+  return lines;
 }
 function parseCommon(text) {
   const lines = String(text).split('\n');
   if (lines[0] !== 'v1') throw new Error('Tanınmayan QR içeriği (sürüm uyumsuz).');
-  const out = { exam: { sinifSube: '', ders: '', sinav: '' }, fingerprint: '', integerOnly: false, questions: [], rows: [] };
+  const out = { exam: { sinifSube: '', ders: '', sinav: '' }, fingerprint: '', integerOnly: false, mode: 'oyss', questions: [], rows: [] };
+  let labels = null;
   for (const line of lines.slice(1)) {
     const [k, ...r] = line.split('\t');
     if (k === 's') out.exam.sinifSube = r[0] || '';
@@ -57,27 +62,37 @@ function parseCommon(text) {
     else if (k === 'f') out.fingerprint = r[0] || '';
     else if (k === 'i') out.integerOnly = r[0] === '1';
     else if (k === 'm') out.questions = parseMaxes(r[0]);
+    else if (k === 'k') out.mode = r[0] === 'dersnotu' ? 'dersnotu' : 'oyss';
+    else if (k === 'l') labels = (r[0] || '').split('|');
     else if (k === 'o') out.rows.push(r);
   }
   if (!out.questions.length) throw new Error('QR içeriğinde soru bilgisi yok.');
+  if (labels) out.questions.forEach((q, i) => labels[i] && (q.label = labels[i]));
   return out;
 }
 
 /** Liste (bilgisayar → telefon) */
-export function encodeListText({ exam, fingerprint, questions, integerOnly, students }) {
-  const lines = header(exam, fingerprint, questions);
+export function encodeListText({ exam, fingerprint, questions, integerOnly, students, mode = 'oyss' }) {
+  const lines = header(exam, fingerprint, questions, mode);
   lines.push(`i\t${integerOnly ? 1 : 0}`);
   for (const s of students) lines.push(`o\t${clean(s.no)}\t${clean(s.name)}`);
   return lines.join('\n');
 }
 export function decodeListText(text) {
   const c = parseCommon(text);
-  return { exam: c.exam, fingerprint: c.fingerprint, integerOnly: c.integerOnly, questions: c.questions, students: c.rows.map((r) => ({ no: r[0] || '', name: r[1] || '' })) };
+  return {
+    exam: c.exam,
+    fingerprint: c.fingerprint,
+    integerOnly: c.integerOnly,
+    mode: c.mode,
+    questions: c.questions,
+    students: c.rows.map((r) => ({ no: r[0] || '', name: r[1] || '' })),
+  };
 }
 
 /** Puanlar (telefon → bilgisayar). Ad gönderilmez; eşleştirme okul numarasıyla yapılır. */
-export function encodeScoresText({ exam, fingerprint, questions, students }) {
-  const lines = header(exam, fingerprint, questions);
+export function encodeScoresText({ exam, fingerprint, questions, students, mode = 'oyss' }) {
+  const lines = header(exam, fingerprint, questions, mode);
   for (const s of students) {
     const scores = questions.map((_, q) => clean(s.scores?.[q]).replace(',', '.'));
     if (scores.every((v) => v === '')) continue; // puanı olmayan öğrenci gönderilmez
@@ -93,12 +108,12 @@ export function decodeScoresText(text) {
     while (scores.length < Q) scores.push('');
     return { no: r[0] || '', scores: scores.slice(0, Q) };
   });
-  return { exam: c.exam, fingerprint: c.fingerprint, questions: c.questions, students };
+  return { exam: c.exam, fingerprint: c.fingerprint, mode: c.mode, questions: c.questions, students };
 }
 
 /** Puanları panelin içe aktarma penceresinin anlayacağı sekmeli metne çevirir */
 export function scoresToTSV(decoded) {
-  const head = ['Okul No', ...decoded.questions.map((q, i) => `${i + 1}. Soru (${Number.isFinite(q.max) ? q.max : ''})`)];
+  const head = ['Okul No', ...decoded.questions.map((q, i) => q.label || `${i + 1}. Soru (${Number.isFinite(q.max) ? q.max : ''})`)];
   return [head, ...decoded.students.map((s) => [s.no, ...s.scores])].map((r) => r.join('\t')).join('\n');
 }
 

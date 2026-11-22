@@ -136,7 +136,7 @@ export function scanQR({ title, hint = '', expectedKind }) {
     async function handle(texts) {
       for (const t of texts) {
         const r = collector.add(t);
-        if (r.status === 'ignored') setStatus('Bu QR kodu Yazılı Not Asistanı\'na ait değil.', 'warn');
+        if (r.status === 'ignored') setStatus('Bu QR kodu Not Asistanı\'na ait değil.', 'warn');
         else if (r.status === 'wrong-kind')
           setStatus(`Bu kod ${KIND_NAME[r.kind] || 'farklı içerik'} içeriyor; burada ${KIND_NAME[expectedKind]} bekleniyor.`, 'warn');
         else {

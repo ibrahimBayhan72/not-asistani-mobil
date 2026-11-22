@@ -1,17 +1,17 @@
 // CSV dışa aktarma (Türkçe Excel uyumlu: UTF-8 BOM, ';' ayırıcı, ondalık virgül).
 import { studentTotal, formatNumber, normalizeScoreText } from './score-calculator.js';
 
+/** Sütun başlığı: ders notunda e-Okul'daki ad ("1.Sınav"), OYSS'de "1. Soru (20)" */
+export const columnTitle = (q, i) => (q && q.label ? q.label : `${i + 1}. Soru (${formatNumber(q.max)})`);
+
 export function sheetToRows(sheet) {
-  const head = [
-    'Okul No',
-    'Adı Soyadı',
-    ...sheet.questions.map((q, i) => `${i + 1}. Soru (${formatNumber(q.max)})`),
-    'Toplam',
-  ];
+  const dersNotu = sheet.mode === 'dersnotu';
+  const head = ['Okul No', 'Adı Soyadı', ...sheet.questions.map(columnTitle), dersNotu ? 'Ortalama' : 'Toplam'];
   const rows = sheet.students.map((s) => {
     const scores = sheet.questions.map((_, i) => normalizeScoreText(s.scores?.[i]));
     const { total, filled } = studentTotal(s.scores);
-    return [s.no ?? '', s.name ?? '', ...scores, filled ? formatNumber(total) : ''];
+    const last = !filled ? '' : dersNotu ? formatNumber(Math.round((total / filled) * 100) / 100) : formatNumber(total);
+    return [s.no ?? '', s.name ?? '', ...scores, last];
   });
   return [head, ...rows];
 }

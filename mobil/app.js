@@ -1,4 +1,4 @@
-// Yazılı Not Asistanı Mobil — telefonda puan hazırlama (PWA).
+// Not Asistanı Mobil — telefonda puan hazırlama (PWA).
 // Veriler yalnızca bu cihazda tutulur (öğretmen onay verirse localStorage, vermezse yalnızca bellekte).
 import { validateStudent, validateQuestions, validateSheet } from '../modules/score-validator.js';
 import { parseScore, studentTotal, formatNumber, isAbsentMark, ABSENT_MARK } from '../modules/score-calculator.js';
@@ -97,6 +97,9 @@ function ask(title, html, okLabel = 'Evet', cancelLabel = 'Vazgeç') {
 const buzz = (p) => navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive) && navigator.vibrate(p);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const examTitle = (e) => [e.exam.sinifSube, e.exam.ders].filter(Boolean).join(' · ') || 'Adsız sınav';
+// Son sütun: OYSS'de toplam, ders notunda ortalama
+const isDN = () => current && current.mode === 'dersnotu';
+const lastVal = (v) => (v.status === 'absent' ? 'G' : !v.filled ? '' : isDN() ? formatNumber(Math.round((v.total / v.filled) * 100) / 100) : formatNumber(v.total));
 
 // ------------------------------------------------------------------ görünümler
 let current = null; // açık sınav
@@ -122,7 +125,7 @@ document.addEventListener('click', (e) => {
 
 // ------------------------------------------------------------------ ana sayfa
 function examStats(e) {
-  const v = validateSheet({ questions: e.questions, students: e.students, integerOnly: e.integerOnly });
+  const v = validateSheet({ questions: e.questions, students: e.students, integerOnly: e.integerOnly, mode: e.mode });
   const s = v.summary;
   return { ...s, done: s.ok + s.absent, total: e.students.length };
 }
@@ -212,7 +215,7 @@ async function receiveList(text) {
     const sameQ = same.questions.length === d.questions.length;
     const old = new Map(same.students.map((s) => [s.no, s.scores]));
     same.students = d.students.map((s) => ({ no: s.no, name: s.name, scores: sameQ && old.get(s.no) ? old.get(s.no).slice() : Array(d.questions.length).fill('') }));
-    Object.assign(same, { exam: d.exam, fingerprint: d.fingerprint, integerOnly: d.integerOnly, questions: d.questions, updated: Date.now() });
+    Object.assign(same, { exam: d.exam, fingerprint: d.fingerprint, integerOnly: d.integerOnly, mode: d.mode, questions: d.questions, updated: Date.now() });
     store.save();
     toast(`${d.students.length} öğrencilik liste güncellendi.`, 'ok');
     return openExam(same.id);
@@ -224,6 +227,7 @@ async function receiveList(text) {
     exam: d.exam,
     fingerprint: d.fingerprint,
     integerOnly: d.integerOnly,
+    mode: d.mode,
     questions: d.questions,
     students: d.students.map((s) => ({ no: s.no, name: s.name, scores: Array(d.questions.length).fill('') })),
   };
@@ -301,7 +305,7 @@ document.querySelector('.mode').addEventListener('click', (e) => {
 function renderEntry(msg = '', msgKind = '') {
   if (!current) return go('home');
   const s = stu();
-  const v = validateStudent(s, current.questions, { integerOnly: current.integerOnly });
+  const v = validateStudent(s, current.questions, { integerOnly: current.integerOnly, mode: current.mode });
   const done = examStats(current);
   $('#eTitle').textContent = examTitle(current);
   $('#eSub').textContent = `${done.done}/${done.total} öğrenci tamam${current.integerOnly ? ' · tam sayı' : ''}`;
@@ -313,9 +317,9 @@ function renderEntry(msg = '', msgKind = '') {
       .map((q, i) => {
         const c = v.cells[i];
         const val = s.scores[i] ?? '';
-        return `<button data-q="${i}" class="${i === cur.q ? 'cur' : ''} ${c && c.status === 'error' ? 'err' : ''}"><small>${i + 1}.S /${formatNumber(q.max)}</small><b>${esc(isAbsentMark(val) ? 'G' : val)}</b></button>`;
+        return `<button data-q="${i}" class="${i === cur.q ? 'cur' : ''} ${c && c.status === 'error' ? 'err' : ''}"><small>${esc(q.label || `${i + 1}.S`)} /${formatNumber(q.max)}</small><b>${esc(isAbsentMark(val) ? 'G' : val)}</b></button>`;
       })
-      .join('') + `<button class="tot" disabled><small>Toplam</small><b>${v.status === 'absent' ? 'G' : v.filled ? formatNumber(v.total) : ''}</b></button>`;
+      .join('') + `<button class="tot" disabled><small>${isDN() ? 'Ortalama' : 'Toplam'}</small><b>${lastVal(v)}</b></button>`;
   $('#chips').querySelector('.cur')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 
   const val = s.scores[cur.q] ?? '';
@@ -327,7 +331,7 @@ function renderEntry(msg = '', msgKind = '') {
     dv.textContent = 'G';
     dv.className = 'd-value absent';
   } else {
-    $('#dLabel').textContent = `${cur.q + 1}. Soru · en fazla ${formatNumber(max)} puan`;
+    $('#dLabel').textContent = `${current.questions[cur.q].label || `${cur.q + 1}. Soru`} · en fazla ${formatNumber(max)} puan`;
     dv.textContent = val === '' ? '—' : String(val).replace('.', ',');
     dv.className = 'd-value' + (val === '' ? ' empty' : cell && cell.status === 'error' ? ' err' : '');
   }
@@ -399,6 +403,7 @@ async function press(k) {
   const max = current.questions[cur.q].max;
   if (k === 'next') return advance();
   if (k === 'G') {
+    if (current.mode === 'dersnotu' && !isAbsentRow(s)) return reject('Ders Notu ekranında G (sınava girmedi) kullanılmaz; kutuyu boş bırakın.');
     if (isAbsentRow(s)) {
       s.scores = Array(Q()).fill('');
       touch();
@@ -484,10 +489,10 @@ function sumChips(v) {
 }
 function renderList() {
   if (!current) return go('home');
-  const v = validateSheet({ questions: current.questions, students: current.students, integerOnly: current.integerOnly });
+  const v = validateSheet({ questions: current.questions, students: current.students, integerOnly: current.integerOnly, mode: current.mode });
   $('#lSub').textContent = examTitle(current);
   $('#lSum').innerHTML = sumChips(v);
-  const head = `<tr><th>No</th><th>Ad Soyad</th>${current.questions.map((q, i) => `<th>${i + 1}</th>`).join('')}<th>Top.</th></tr>`;
+  const head = `<tr><th>No</th><th>Ad Soyad</th>${current.questions.map((q, i) => `<th>${esc(q.label || i + 1)}</th>`).join('')}<th>${isDN() ? 'Ort.' : 'Top.'}</th></tr>`;
   $('#lTable').innerHTML =
     head +
     current.students
@@ -495,7 +500,7 @@ function renderList() {
         const sv = v.students[r];
         return `<tr data-r="${r}" class="st-${sv.status}"><td>${esc(s.no)}</td><td class="n">${esc(s.name)}</td>${current.questions
           .map((_, i) => `<td class="${sv.cells[i] && sv.cells[i].status === 'error' ? 'e' : ''}">${esc(isAbsentMark(s.scores[i]) ? 'G' : String(s.scores[i] ?? '').replace('.', ','))}</td>`)
-          .join('')}<td><b>${sv.status === 'absent' ? 'G' : sv.filled ? formatNumber(sv.total) : ''}</b></td></tr>`;
+          .join('')}<td><b>${lastVal(sv)}</b></td></tr>`;
       })
       .join('');
 }
@@ -511,7 +516,7 @@ $('#lTable').addEventListener('click', (e) => {
 // ------------------------------------------------------------------ gönder
 async function renderSend() {
   if (!current) return go('home');
-  const v = validateSheet({ questions: current.questions, students: current.students, integerOnly: current.integerOnly });
+  const v = validateSheet({ questions: current.questions, students: current.students, integerOnly: current.integerOnly, mode: current.mode });
   $('#sSub').textContent = examTitle(current);
   $('#sSum').innerHTML = sumChips(v);
   const warns = [];
@@ -519,7 +524,7 @@ async function renderSend() {
   if (v.summary.incomplete) warns.push(`${v.summary.incomplete} öğrencide eksik puan var.`);
   if (!current.fingerprint) warns.push('Bu sınav telefonda elle oluşturuldu; bilgisayarda öğrenciler okul numarasıyla eşleştirilecek.');
   $('#sWarn').innerHTML = warns.map((w) => `<p class="warnbox">${esc(w)}</p>`).join('');
-  const text = encodeScoresText({ exam: current.exam, fingerprint: current.fingerprint, questions: current.questions, students: current.students });
+  const text = encodeScoresText({ exam: current.exam, fingerprint: current.fingerprint, questions: current.questions, students: current.students, mode: current.mode });
   if (!text.includes('\no\t')) {
     $('#qrHost').innerHTML = '<div class="empty">Henüz puan girilmedi.</div>';
     return;

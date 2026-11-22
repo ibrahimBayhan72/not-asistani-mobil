@@ -1,7 +1,7 @@
 {
-  "name": "Yazılı Not Asistanı Mobil",
+  "name": "Not Asistanı Mobil",
   "short_name": "Not Asistanı",
-  "description": "Yazılı sınav puanlarını telefonda hazırlayın, QR kod ile bilgisayardaki Yazılı Not Asistanı'na aktarın.",
+  "description": "Yazılı sınav puanlarını telefonda hazırlayın, QR kod ile bilgisayardaki Not Asistanı'na aktarın.",
   "lang": "tr",
   "start_url": "./",
   "scope": "./",

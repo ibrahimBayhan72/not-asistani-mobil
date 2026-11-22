@@ -23,28 +23,45 @@ export function validateScore(raw, max, opts = {}) {
   return { status: 'ok', value: p.value, message: '' };
 }
 
-/** Soru ayarlarını (maksimum puanlar) doğrular. */
-export function validateQuestions(questions) {
+/** Sütun adı: ders notunda "1.Sınav", OYSS'de "3. soru" */
+export const colName = (q, i) => (q && q.label ? q.label : `${i + 1}. soru`);
+
+/**
+ * Soru/sütun ayarlarını (maksimum puanlar) doğrular.
+ * mode 'dersnotu': her sütun ayrı bir nottur (0-100); toplam 100 kuralı uygulanmaz.
+ */
+export function validateQuestions(questions, { mode = 'oyss' } = {}) {
   const items = (questions || []).map((q, i) => {
-    if (!Number.isFinite(q.max)) return { status: 'error', message: `${i + 1}. sorunun maksimum puanı girilmedi` };
-    if (q.max <= 0) return { status: 'error', message: `${i + 1}. sorunun maksimum puanı 0'dan büyük olmalı` };
-    if (q.max > TOTAL_LIMIT) return { status: 'error', message: `${i + 1}. sorunun maksimum puanı ${TOTAL_LIMIT}'ü aşamaz` };
+    if (!Number.isFinite(q.max)) return { status: 'error', message: `${colName(q, i)} için maksimum puan girilmedi` };
+    if (q.max <= 0) return { status: 'error', message: `${colName(q, i)} maksimum puanı 0'dan büyük olmalı` };
+    if (q.max > TOTAL_LIMIT) return { status: 'error', message: `${colName(q, i)} maksimum puanı ${TOTAL_LIMIT}'ü aşamaz` };
     return { status: 'ok', message: '' };
   });
   const total = maxTotal(questions);
   const errors = items.filter((x) => x.status === 'error').map((x) => x.message);
   const warnings = [];
-  if (!questions || !questions.length) errors.push('Soru sayısı en az 1 olmalı');
-  else if (total > TOTAL_LIMIT) errors.push(`Soruların toplam puanı ${TOTAL_LIMIT}'ü aşamaz (şu an ${formatNumber(total)})`);
-  else if (total < TOTAL_LIMIT && !errors.length)
-    warnings.push(`Soruların toplam puanı ${formatNumber(total)}; genellikle ${TOTAL_LIMIT} olmalıdır`);
-  return { items, total, errors, warnings, ok: errors.length === 0 };
+  if (!questions || !questions.length) errors.push(mode === 'dersnotu' ? 'Not sütunu bulunamadı' : 'Soru sayısı en az 1 olmalı');
+  else if (mode !== 'dersnotu') {
+    if (total > TOTAL_LIMIT) errors.push(`Soruların toplam puanı ${TOTAL_LIMIT}'ü aşamaz (şu an ${formatNumber(total)})`);
+    else if (total < TOTAL_LIMIT && !errors.length) warnings.push(`Soruların toplam puanı ${formatNumber(total)}; genellikle ${TOTAL_LIMIT} olmalıdır`);
+  }
+  return { items, total, errors, warnings, ok: errors.length === 0, mode };
 }
 
-/** Bir öğrencinin satırını doğrular. */
+/** Bir öğrencinin satırını doğrular. opts: {integerOnly, mode} */
 export function validateStudent(student, questions, opts = {}) {
-  // Sınava girmedi (G): satırda başka puan olmamalı
+  const mode = opts.mode || 'oyss';
   const scores = student.scores || [];
+  // Ders notu ekranında "sınava girmedi" işareti yoktur
+  if (mode === 'dersnotu' && questions.some((_, i) => isAbsentMark(scores[i]))) {
+    const cells = questions.map((q, i) => {
+      const raw = String(scores[i] ?? '').trim();
+      if (isAbsentMark(raw)) return { status: 'error', value: null, message: 'Ders notunda G kullanılamaz; boş bırakın' };
+      return validateScore(raw, q.max, opts);
+    });
+    return { cells, total: 0, filled: 0, missing: 0, errors: ['Ders notu ekranında G (girmedi) kullanılamaz; o kutuyu boş bırakın'], status: 'error' };
+  }
+  // Sınava girmedi (G): satırda başka puan olmamalı
   if (questions.some((_, i) => isAbsentMark(scores[i]))) {
     const cells = questions.map((_, i) => {
       const raw = String(scores[i] ?? '').trim();
@@ -59,8 +76,8 @@ export function validateStudent(student, questions, opts = {}) {
   const cells = questions.map((q, i) => validateScore(student.scores?.[i], q.max, opts));
   const { total, filled } = studentTotal(student.scores);
   const errors = [];
-  cells.forEach((c, i) => c.status === 'error' && errors.push(`${i + 1}. soru: ${c.message}`));
-  if (total > TOTAL_LIMIT) errors.push(`Toplam ${formatNumber(total)}, ${TOTAL_LIMIT}'ü aşamaz`);
+  cells.forEach((c, i) => c.status === 'error' && errors.push(`${colName(questions[i], i)}: ${c.message}`));
+  if (mode !== 'dersnotu' && total > TOTAL_LIMIT) errors.push(`Toplam ${formatNumber(total)}, ${TOTAL_LIMIT}'ü aşamaz`);
   const missing = cells.filter((c) => c.status === 'empty').length;
   let status = 'ok';
   if (errors.length) status = 'error';
@@ -74,8 +91,9 @@ export function validateStudent(student, questions, opts = {}) {
  * @param {{questions:{max:number}[], students:{no:string,name:string,scores:string[]}[], integerOnly?:boolean}} sheet
  */
 export function validateSheet(sheet) {
-  const questions = validateQuestions(sheet.questions);
-  const opts = { integerOnly: !!sheet.integerOnly };
+  const mode = sheet.mode === 'dersnotu' ? 'dersnotu' : 'oyss';
+  const questions = validateQuestions(sheet.questions, { mode });
+  const opts = { integerOnly: !!sheet.integerOnly, mode };
   const students = sheet.students.map((s) => validateStudent(s, sheet.questions, opts));
 
   // Kimlik kontrolleri: okul no tekrarı ve kimliksiz satırlar
