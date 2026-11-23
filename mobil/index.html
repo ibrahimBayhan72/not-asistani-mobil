@@ -91,6 +91,7 @@
     <header class="bar">
       <button class="back" data-go="home" aria-label="Sınavlar">‹</button>
       <div class="bar-title"><b id="eTitle"></b><small id="eSub"></small></div>
+      <button class="tool" data-go="kagit" id="btnKagit" aria-label="Kâğıttan oku">📷</button>
       <button class="tool" data-go="list" aria-label="Liste">📋</button>
       <button class="tool" data-go="send" aria-label="Bilgisayara gönder">📤</button>
     </header>
@@ -115,6 +116,57 @@
       <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button data-k="empty" class="fn small">Boş</button>
       <button data-k="dot" class="fn" id="kDot" aria-label="Ondalık">,</button><button data-k="0">0</button><button data-k="next" class="next">İleri ›</button>
     </div>
+  </section>
+
+  <!-- ============================================================ KÂĞITTAN OKU -->
+  <section class="view" id="vKagit" hidden>
+    <header class="bar"><button class="back" data-go="entry" aria-label="Geri">‹</button><div class="bar-title"><b>Kâğıttan oku</b><small id="kBaslik"></small></div></header>
+    <main class="pad k">
+      <p class="k-hata" id="kHata" role="alert"></p>
+
+      <div id="kSablon" hidden>
+        <div class="k-card">
+          <h3>1. Sınav PDF'sini seçin</h3>
+          <p>Sınav kâğıdının PDF dosyasını seçin (bilgisayardan Drive ya da WhatsApp ile telefona gönderebilirsiniz). Uygulama puan kutularının yerini bulur. Bu işlem sınav başına bir kez yapılır; şablon bu telefonda saklanır, öğrenci bilgisi içermez.</p>
+          <label class="k-dosya">📄 PDF seç<input type="file" id="kPdf" accept="application/pdf,.pdf" hidden></label>
+          <p class="k-durum" id="kPdfDurum"></p>
+          <button class="link" id="kElleLink" hidden>Kutuları elle işaretleyeceğim</button>
+        </div>
+        <p class="k-not">🔒 Kâğıt fotoğrafları yalnızca bu telefonda işlenir; saklanmaz ve hiçbir yere gönderilmez.</p>
+      </div>
+
+      <div id="kTara" hidden>
+        <div class="k-card"><div id="kSablonBilgi"></div><button class="link" id="kSablonDegis">Şablonu değiştir</button></div>
+        <div class="k-pages" id="kSayfalar"></div>
+        <p class="k-durum" id="kDurum"></p>
+        <div class="k-actions">
+          <button class="primary big" id="kCek">📷 Kâğıdı çek</button>
+          <button id="kGaleri">🖼 Galeriden seç (birden çok sayfa)</button>
+        </div>
+        <input type="file" id="kCekInput" accept="image/*" capture="environment" hidden>
+        <input type="file" id="kGaleriInput" accept="image/*" multiple hidden>
+        <div class="k-onizleme" id="kOnizleme"></div>
+        <button class="primary big" id="kSonucaGec" disabled>Sonuçlara geç ›</button>
+      </div>
+
+      <div id="kSonuc" hidden>
+        <div id="kSonucGovde"></div>
+        <button class="primary big" id="kKaydet" disabled>💾 Kaydet</button>
+        <div class="k-actions"><button id="kSonucGeri">‹ Fotoğraflara dön</button><button id="kYeniden">Baştan başla</button></div>
+      </div>
+
+      <div id="kElle" hidden>
+        <p>Bu PDF'de puan kutuları kendiliğinden bulunamadı. Her sayfada, puanın yazılacağı yere dokunarak kutuyu işaretleyin. Önce soru kutuları, istersen öğrenci no ve toplam kutusu.</p>
+        <div class="k-arac">
+          <label><input type="radio" name="kArac" value="soru" checked> Soru puanı</label>
+          <label><input type="radio" name="kArac" value="no"> Öğrenci no</label>
+          <label><input type="radio" name="kArac" value="toplam"> Toplam</label>
+        </div>
+        <p id="kElleSay" class="k-durum"></p>
+        <div id="kElleSayfalar"></div>
+        <div class="k-actions"><button id="kElleGeri">↶ Geri al</button><button class="primary" id="kElleBitti" disabled>Bitti</button></div>
+      </div>
+    </main>
   </section>
 
   <!-- ============================================================ LİSTE -->

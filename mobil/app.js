@@ -5,6 +5,7 @@ import { parseScore, studentTotal, formatNumber, isAbsentMark, ABSENT_MARK } fro
 import { sheetToRows, toCSV, makeFileName } from '../modules/export-manager.js';
 import { KIND, makeFrames, decodeListText, encodeScoresText } from '../modules/qr-transfer.js';
 import { renderQR, scanQR } from '../ui/qr-ui.js';
+import { initKagit, render as renderKagit } from './kagit.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -104,7 +105,7 @@ const lastVal = (v) => (v.status === 'absent' ? 'G' : !v.filled ? '' : isDN() ? 
 // ------------------------------------------------------------------ görünümler
 let current = null; // açık sınav
 const cur = { r: 0, q: 0, fresh: true, mode: 'student' };
-const VIEWS = ['home', 'setup', 'entry', 'list', 'send'];
+const VIEWS = ['home', 'setup', 'entry', 'list', 'send', 'kagit'];
 let qrHandle = null;
 let wakeLock = null;
 
@@ -116,6 +117,7 @@ function go(view) {
   if (view === 'entry') renderEntry();
   if (view === 'list') renderList();
   if (view === 'send') renderSend();
+  if (view === 'kagit') renderKagit();
   window.scrollTo(0, 0);
 }
 document.addEventListener('click', (e) => {
@@ -364,6 +366,7 @@ function renderEntry(msg = '', msgKind = '') {
   m.textContent = msg || (cell && cell.status === 'error' ? cell.message : v.errors[0] || '');
   m.className = 'd-msg' + (msgKind === 'err' || (cell && cell.status === 'error') || v.errors.length ? ' err' : '');
   $('#kDot').hidden = !!current.integerOnly;
+  $('#btnKagit').hidden = isDN(); // kâğıttan okuma yalnızca OYSS (soru bazlı) kâğıtlar için
 }
 $('#chips').addEventListener('click', (e) => {
   const b = e.target.closest('[data-q]');
@@ -612,6 +615,15 @@ if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
   box.hidden = false;
   box.innerHTML = '📲 Ana ekrana eklemek için Safari\'de <b>Paylaş</b> ⬆ düğmesine, sonra <b>Ana Ekrana Ekle</b>\'ye dokunun.';
 }
+
+// ------------------------------------------------------------------ kâğıttan okuma
+initKagit({
+  getExam: () => current,
+  saveScores(i, scores) { current.students[i].scores = scores; touch(); },
+  toast,
+  ask,
+  go,
+});
 
 // ------------------------------------------------------------------ başlat
 store.load();
