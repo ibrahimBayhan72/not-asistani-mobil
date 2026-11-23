@@ -123,13 +123,16 @@
     <header class="bar"><button class="back" data-go="entry" aria-label="Geri">‹</button><div class="bar-title"><b>Kâğıttan oku</b><small id="kBaslik"></small></div></header>
     <main class="pad k">
       <p class="k-hata" id="kHata" role="alert"></p>
+      <button class="link" id="kNative" hidden>📷 Telefonun kamera uygulamasını kullan</button>
 
       <div id="kSablon" hidden>
         <div class="k-card">
           <h3>1. Sınav PDF'sini seçin</h3>
           <p>Sınav kâğıdının PDF dosyasını seçin (bilgisayardan Drive ya da WhatsApp ile telefona gönderebilirsiniz). Uygulama puan kutularının yerini bulur. Bu işlem sınav başına bir kez yapılır; şablon bu telefonda saklanır, öğrenci bilgisi içermez.</p>
+          <p class="k-bekleyen" id="kBekleyen" hidden></p>
           <label class="k-dosya">📄 PDF seç<input type="file" id="kPdf" accept="application/pdf,.pdf" hidden></label>
           <p class="k-durum" id="kPdfDurum"></p>
+          <button class="link" id="kSablonCek">📷 Kamerayı aç (daha fazla sayfa çek)</button>
           <button class="link" id="kElleLink" hidden>Kutuları elle işaretleyeceğim</button>
         </div>
         <p class="k-not">🔒 Kâğıt fotoğrafları yalnızca bu telefonda işlenir; saklanmaz ve hiçbir yere gönderilmez.</p>

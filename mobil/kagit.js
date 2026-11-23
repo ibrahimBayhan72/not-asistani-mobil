@@ -16,6 +16,8 @@ let thumbs = null;
 let scan = null; // { pages: {pageIdx: entries[]}, preview: {pageIdx: dataURL} }
 let busy = false;
 let tplFor = null; // şablonun ait olduğu sınav
+let pending = []; // şablon yokken çekilen sayfalar (PDF seçilince okunur)
+const SURUM = 'v10';
 
 // ------------------------------------------------------------------ şablon deposu (IndexedDB; öğrenci verisi içermez, boş sınav kâğıdı)
 const db = () => new Promise((res, rej) => {
@@ -72,7 +74,9 @@ export function initKagit(a) {
   $('#kGaleriInput').onchange = (e) => onPhotos(e.target.files);
   $('#kCek').onclick = openCamera;
   $('#kKamKapat').onclick = () => { closeCamera(); renderTara(); };
-  $('#kKamBitti').onclick = () => { closeCamera(); showResults(); };
+  $('#kKamBitti').onclick = () => { closeCamera(); if (!tpl) { setSection('kSablon'); renderBekleyen(); } else showResults(); };
+  $('#kSablonCek').onclick = openCamera;
+  $('#kNative').onclick = () => $('#kCekInput').click(); // telefonun kendi kamera uygulaması (kullanıcı dokunuşuyla açılır)
   $('#kKamCek').onclick = shoot;
   $('#kGaleri').onclick = () => $('#kGaleriInput').click();
   $('#kSablonDegis').onclick = async () => {
@@ -92,14 +96,15 @@ export function initKagit(a) {
 export async function render({ camera = true } = {}) {
   exam = api.getExam();
   if (!exam) return api.go('home');
-  $('#kBaslik').textContent = [exam.exam.sinifSube, exam.exam.ders].filter(Boolean).join(' · ') || 'Sınav';
+  $('#kBaslik').textContent = ([exam.exam.sinifSube, exam.exam.ders].filter(Boolean).join(' · ') || 'Sınav') + ' · ' + SURUM;
   setSection(null);
-  $('#kHata').textContent = '';
-  if (tplFor !== exam.id) { tpl = null; thumbs = null; scan = null; manual = null; pendingPdf = null; tplFor = exam.id; } // başka sınava geçildi
+  $('#kHata').textContent = ''; $('#kNative').hidden = true;
+  if (tplFor !== exam.id) { tpl = null; thumbs = null; scan = null; manual = null; pendingPdf = null; pending = []; tplFor = exam.id; } // başka sınava geçildi
   if (!tpl) tpl = await loadTemplate(exam.id);
   if (tpl && !thumbs) thumbs = refThumbs(tpl.pages.map((p) => p.canvas));
-  if (!tpl) return setSection('kSablon');
   if (!scan) scan = { pages: {}, preview: {} };
+  if (!tpl) { setSection('kSablon'); renderBekleyen(); if (camera) openCamera(); return; } // şablon yoksa da kamera ÖNCE açılır
+
   setSection('kTara');
   renderTara();
   if (camera) openCamera(); // 📷'e basınca doğrudan kamera açılır; kâğıt görseli aramak gerekmez
@@ -126,12 +131,35 @@ async function onPdf(e) {
     if (!tp.ok && !(await api.ask('Uyarı', `<p>${esc(tp.notes.join(' '))}</p><p>e-Okul'daki puanlar esas alınır. Yine de kullanılsın mı?</p>`, 'Kullan'))) return;
     tpl = t; thumbs = refThumbs(t.pages.map((p) => p.canvas));
     await saveTemplate(exam.id, t);
-    busy = false; scan = null; render(); // meşgul bayrağı kapandıktan sonra: kamera kendiliğinden açılır
+    busy = false; scan = null; await afterTemplate(); // meşgul bayrağı kapandıktan sonra: bekleyen sayfalar okunur, kamera açılır
   } catch (err) {
     $('#kHata').textContent = 'PDF okunamadı: ' + (err && err.message ? err.message : err) + ' — Bu cihazın tarayıcısı PDF okuyucuyu desteklemiyor olabilir (güncel Chrome/Safari gerekir).';
   } finally { busy = false; $('#kPdfDurum').textContent = ''; }
 }
 let pendingPdf = null;
+
+function renderBekleyen() {
+  const el = $('#kBekleyen');
+  el.hidden = !pending.length;
+  el.textContent = pending.length ? `📷 ${pending.length} sayfa çekildi. Okumak için sınav PDF'sini seçin (sınav başına bir kez).` : '';
+}
+/** Şablon hazır olunca: şablon yokken çekilmiş sayfalar okunur; eksik sayfa varsa kamera açılır, hepsi tamamsa sonuç gösterilir */
+async function afterTemplate() {
+  if (!pending.length) return render();
+  setSection('kTara'); if (!scan) scan = { pages: {}, preview: {} }; renderTara();
+  const list = pending; pending = [];
+  busy = true; let red = 0;
+  try {
+    status(`Çektiğiniz ${list.length} sayfa okunuyor…`);
+    await Promise.all([loadCV(), loadNet()]);
+    for (const c of list) { await new Promise((r) => setTimeout(r, 30)); const r = await processCanvas(c); if (r.rejected) red++; }
+    status(red ? `${red} fotoğraf şablondaki hiçbir sayfaya benzemediği için atlandı; yeniden çekin.` : '', red > 0);
+  } catch (err) {
+    $('#kHata').textContent = 'Sayfalar okunamadı: ' + (err && err.message ? err.message : err);
+  } finally { busy = false; renderTara(); }
+  if (Object.keys(scan.pages).length >= tpl.pages.length) return showResults();
+  render(); // eksik sayfalar için kamera
+}
 
 function renderTara() {
   const tp = tpl.template;
@@ -176,6 +204,11 @@ async function processCanvas(photo) {
 async function onPhotos(files) {
   const list = [...files]; for (const id of ['#kCekInput', '#kGaleriInput']) $(id).value = '';
   if (!list.length || busy) return;
+  if (!tpl) { // şablon yok: fotoğraflar bekleme listesine
+    try { for (const f of list) pending.push(await photoToCanvas(f, 2000)); renderBekleyen(); $('#kHata').textContent = ''; $('#kNative').hidden = true; }
+    catch (err) { $('#kHata').textContent = 'Fotoğraf işlenemedi: ' + (err && err.message ? err.message : err); }
+    return;
+  }
   busy = true; $('#kHata').textContent = '';
   try {
     status('Görüntü işleme motoru yükleniyor… (ilk kullanımda ~13 MB, sonra çevrimdışı çalışır)');
@@ -195,31 +228,56 @@ async function onPhotos(files) {
 let stream = null, camBusy = false, camGen = 0; // camGen: açılış sırasında kapatılırsa gelen akışı yoksaymak için
 const camStatus = (t, err) => { const el = $('#kKamDurum'); el.textContent = t || ''; el.className = err ? 'err' : ''; };
 function camInfo() {
+  if (!tpl) { $('#kKamBilgi').textContent = `Sayfa ${pending.length + 1}`; $('#kKamBitti').disabled = !pending.length; return; }
   const done = Object.keys(scan.pages).map(Number);
   const next = tpl.pages.findIndex((_, i) => !done.includes(i));
   $('#kKamBilgi').textContent = next >= 0 ? `Sayfa ${next + 1} / ${tpl.pages.length}` : `${tpl.pages.length} sayfa tamam · yeniden çek`;
   $('#kKamBitti').disabled = !done.length;
 }
 async function openCamera() {
-  if (!tpl || stream || busy || $('#kKamera').hidden === false) return;
+  if (stream || busy || $('#kKamera').hidden === false) return;
   const my = ++camGen;
   if (!scan) scan = { pages: {}, preview: {} };
   $('#kKamera').hidden = false; document.body.style.overflow = 'hidden'; document.body.classList.add('kam-acik');
   camInfo(); camStatus('Kamera açılıyor…');
   loadCV().catch(() => {}); loadNet().catch(() => {}); // ilk çekimden önce motoru ısıt
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('desteklenmiyor'), { name: 'NotSupported' });
-    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('bu tarayıcıda yok'), { name: 'NotSupported' });
+    // önce yüksek çözünürlük; olmazsa daha sade istekler (bazı telefonlar yüksek çözünürlüğü reddeder)
+    const denemeler = [
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false },
+      { video: { facingMode: { ideal: 'environment' } }, audio: false },
+      { video: true, audio: false },
+    ];
+    let s = null, sonHata = null;
+    for (const c of denemeler) {
+      try { s = await navigator.mediaDevices.getUserMedia(c); break; } catch (e) { sonHata = e; if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) break; }
+    }
+    if (!s) throw sonHata || new Error('kamera açılamadı');
     if (my !== camGen) { s.getTracks().forEach((t) => t.stop()); return; } // izin beklenirken kamera kapatıldı
     stream = s;
     const v = $('#kVideo'); v.srcObject = stream; await v.play();
     camStatus('Kâğıdın tamamı çerçevede olsun, sonra çekin.');
   } catch (e) {
     if (my !== camGen) return;
-    closeCamera(); renderTara();
-    if (e && e.name === 'NotAllowedError') status('Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamerayı açın, sonra "Kamerayı aç"a basın.', true);
-    else $('#kCekInput').click(); // uygulama içi kamera yoksa telefonun kendi kamera uygulaması açılır
+    closeCamera();
+    if (tpl) renderTara(); else { setSection('kSablon'); renderBekleyen(); }
+    showCamError(e);
   }
+}
+/** Kamera açılamadıysa nedenini ekranda açıkça yazar ve telefonun kendi kamera uygulamasını önerir */
+function showCamError(e) {
+  const n = (e && e.name) || 'Hata';
+  const ipucu = {
+    NotAllowedError: 'Kamera izni verilmedi. Adres çubuğundaki kilit/ayarlar simgesinden bu site için kamerayı "İzin ver" yapıp yeniden deneyin.',
+    NotFoundError: 'Bu telefonda kamera bulunamadı.',
+    NotReadableError: 'Kamera başka bir uygulama tarafından kullanılıyor olabilir. Diğer uygulamaları kapatıp yeniden deneyin.',
+    NotSupported: 'Bu tarayıcı uygulama içinde kamera açmayı desteklemiyor.',
+    OverconstrainedError: 'Kamera ayarları bu telefonda desteklenmiyor.',
+    SecurityError: 'Kamera yalnızca güvenli (https) bağlantıda açılır.',
+  }[n] || '';
+  $('#kHata').textContent = `Kamera açılamadı (${n}${e && e.message ? ': ' + e.message : ''}). ${ipucu} Aşağıdaki düğmeyle telefonun kendi kamera uygulamasını da kullanabilirsiniz.`;
+  $('#kNative').hidden = false;
 }
 function closeCamera() {
   camGen++;
@@ -231,13 +289,19 @@ function closeCamera() {
 }
 async function shoot() {
   const v = $('#kVideo');
-  if (camBusy || !stream || !v.videoWidth) return;
+  if (camBusy) return;
+  if (!stream || !v.videoWidth) { camStatus('Kamera hazırlanıyor, birkaç saniye bekleyip yeniden dokunun…'); return; }
   camBusy = true; $('#kKamCek').disabled = true;
   const fl = $('#kFlash'); fl.classList.add('on'); setTimeout(() => fl.classList.remove('on'), 80);
   const frame = mk(v.videoWidth, v.videoHeight); frame.getContext('2d').drawImage(v, 0, 0);
   camStatus('Okunuyor…');
   try {
     await new Promise((r) => setTimeout(r, 30));
+    if (!tpl) { // şablon (PDF) henüz yok: sayfayı sakla, PDF seçilince okunur
+      pending.push(scaleCanvas(frame, 2000)); camInfo();
+      camStatus(`✓ ${pending.length}. sayfa çekildi. Sıradaki sayfayı çekin; bitince "Bitti"ye basın.`);
+      return;
+    }
     const r = await processCanvas(scaleCanvas(frame, 2000));
     if (r.rejected) camStatus('✖ Sayfa tanınamadı. Kâğıdı çerçeveye alıp yeniden çekin.', true);
     else if (Object.keys(scan.pages).length >= tpl.pages.length) { closeCamera(); renderTara(); showResults(); return; }
@@ -382,5 +446,5 @@ async function finishManual() {
   const pick = (k) => { const x = b.find((z) => z.tool === k); return x ? { x: x.x, y: x.y, w: x.w, h: x.h, page: x.page } : null; };
   t.template = { blanks: soru, no: pick('no'), total: pick('toplam'), name: null, sinif: null, ok: true, notes: [], pageCount: t.pages.length, manual: true };
   tpl = t; thumbs = refThumbs(t.pages.map((p) => p.canvas)); manual = null; pendingPdf = null;
-  await saveTemplate(exam.id, t); scan = null; render();
+  await saveTemplate(exam.id, t); scan = null; await afterTemplate();
 }

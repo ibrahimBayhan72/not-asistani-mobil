@@ -629,6 +629,9 @@ initKagit({
 // ------------------------------------------------------------------ başlat
 store.load();
 go('home');
+// Yeni sürüm yüklenince kullanıcıyı bilgilendir (eski sürüm açıkken yeni dosyalar arka planda iner)
+const eskiKontrol = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('controllerchange', () => { if (eskiKontrol) toast('Yeni sürüm yüklendi. Uygulamayı kapatıp yeniden açın.', 'ok', 9000); });
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
   navigator.serviceWorker.register('sw.js').catch(() => {});
 

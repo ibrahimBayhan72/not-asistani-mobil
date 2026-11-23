@@ -208,3 +208,6 @@ dialog.ask .row { margin-top: 14px; justify-content: flex-end; }
 
 /* kamera açıkken bildirim deklanşörün üstüne binmesin */
 body.kam-acik #toast { top: calc(64px + env(safe-area-inset-top)); bottom: auto; z-index: 60; }
+
+.k-bekleyen { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; border-radius: 10px; padding: 8px 10px; font-weight: 600; }
+#kNative { display: block; margin: 6px 0 10px; font-weight: 700; }
