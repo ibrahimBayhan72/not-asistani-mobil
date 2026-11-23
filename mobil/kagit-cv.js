@@ -43,6 +43,14 @@ export async function photoToCanvas(file, maxEdge = 2000) {
   if (bmp.close) bmp.close();
   return c;
 }
+/** Tuvali uzun kenarı maxEdge'i geçmeyecek şekilde küçültür (kamera karesi için) */
+export function scaleCanvas(src, maxEdge = 2000) {
+  const k = Math.min(1, maxEdge / Math.max(src.width, src.height));
+  if (k >= 1) return src;
+  const c = mk(Math.round(src.width * k), Math.round(src.height * k));
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
 const orderCorners = (p) => {
   const s = p.map(([x, y]) => x + y), d = p.map(([x, y]) => y - x);
   return [p[s.indexOf(Math.min(...s))], p[d.indexOf(Math.min(...d))], p[s.indexOf(Math.max(...s))], p[d.indexOf(Math.max(...d))]]; // sol-üst, sağ-üst, sağ-alt, sol-alt

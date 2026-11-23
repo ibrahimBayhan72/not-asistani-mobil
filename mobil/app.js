@@ -5,7 +5,7 @@ import { parseScore, studentTotal, formatNumber, isAbsentMark, ABSENT_MARK } fro
 import { sheetToRows, toCSV, makeFileName } from '../modules/export-manager.js';
 import { KIND, makeFrames, decodeListText, encodeScoresText } from '../modules/qr-transfer.js';
 import { renderQR, scanQR } from '../ui/qr-ui.js';
-import { initKagit, render as renderKagit } from './kagit.js';
+import { initKagit, render as renderKagit, leave as leaveKagit } from './kagit.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -110,6 +110,7 @@ let qrHandle = null;
 let wakeLock = null;
 
 function go(view) {
+  if (view !== 'kagit') leaveKagit(); // kamera açıksa kapat
   for (const v of VIEWS) $(`#v${v[0].toUpperCase()}${v.slice(1)}`).hidden = v !== view;
   if (qrHandle) qrHandle.stop(), (qrHandle = null);
   if (wakeLock) wakeLock.release().catch(() => {}), (wakeLock = null);

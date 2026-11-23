@@ -2,7 +2,7 @@
 // öğretmene onaylatır ve sınav listesine yazar. Her şey cihazda yapılır; fotoğraflar saklanmaz ve hiçbir yere gönderilmez.
 import { itemsFromPdfjs, detectPage, buildTemplate } from '../modules/paper-template.js';
 import { validateScore } from '../modules/score-validator.js';
-import { loadCV, loadNet, photoToCanvas, alignPage, refThumbs, readBox } from './kagit-cv.js';
+import { loadCV, loadNet, photoToCanvas, scaleCanvas, alignPage, refThumbs, readBox } from './kagit-cv.js';
 
 const S = 2; // şablon ve hizalama ölçeği: px / pt
 const $ = (s) => document.querySelector(s);
@@ -70,7 +70,10 @@ export function initKagit(a) {
   $('#kPdf').onchange = onPdf;
   $('#kCekInput').onchange = (e) => onPhotos(e.target.files);
   $('#kGaleriInput').onchange = (e) => onPhotos(e.target.files);
-  $('#kCek').onclick = () => $('#kCekInput').click();
+  $('#kCek').onclick = openCamera;
+  $('#kKamKapat').onclick = () => { closeCamera(); renderTara(); };
+  $('#kKamBitti').onclick = () => { closeCamera(); showResults(); };
+  $('#kKamCek').onclick = shoot;
   $('#kGaleri').onclick = () => $('#kGaleriInput').click();
   $('#kSablonDegis').onclick = async () => {
     if (!(await api.ask('Şablon silinsin mi?', '<p>Bu sınav için kaydedilen sınav PDF şablonu silinecek. Öğrenci puanlarına dokunulmaz.</p>', 'Sil'))) return;
@@ -86,7 +89,7 @@ export function initKagit(a) {
   document.querySelectorAll('input[name=kArac]').forEach((r) => (r.onchange = () => manual && (manual.tool = r.value)));
 }
 
-export async function render() {
+export async function render({ camera = true } = {}) {
   exam = api.getExam();
   if (!exam) return api.go('home');
   $('#kBaslik').textContent = [exam.exam.sinifSube, exam.exam.ders].filter(Boolean).join(' · ') || 'Sınav';
@@ -99,7 +102,9 @@ export async function render() {
   if (!scan) scan = { pages: {}, preview: {} };
   setSection('kTara');
   renderTara();
+  if (camera) openCamera(); // 📷'e basınca doğrudan kamera açılır; kâğıt görseli aramak gerekmez
 }
+export function leave() { closeCamera(); } // başka görünüme geçilirken kamerayı kapat
 function setSection(id) { for (const s of ['kSablon', 'kTara', 'kSonuc', 'kElle']) $('#' + s).hidden = s !== id; }
 const status = (t, err) => { const el = $('#kDurum'); el.textContent = t || ''; el.className = 'k-durum' + (err ? ' err' : ''); };
 
@@ -121,7 +126,7 @@ async function onPdf(e) {
     if (!tp.ok && !(await api.ask('Uyarı', `<p>${esc(tp.notes.join(' '))}</p><p>e-Okul'daki puanlar esas alınır. Yine de kullanılsın mı?</p>`, 'Kullan'))) return;
     tpl = t; thumbs = refThumbs(t.pages.map((p) => p.canvas));
     await saveTemplate(exam.id, t);
-    scan = null; render();
+    busy = false; scan = null; render(); // meşgul bayrağı kapandıktan sonra: kamera kendiliğinden açılır
   } catch (err) {
     $('#kHata').textContent = 'PDF okunamadı: ' + (err && err.message ? err.message : err) + ' — Bu cihazın tarayıcısı PDF okuyucuyu desteklemiyor olabilir (güncel Chrome/Safari gerekir).';
   } finally { busy = false; $('#kPdfDurum').textContent = ''; }
@@ -135,48 +140,111 @@ function renderTara() {
   $('#kSayfalar').innerHTML = tpl.pages.map((_, i) => `<span class="k-chip ${done.includes(i) ? 'ok' : ''}">${i + 1}. sayfa ${done.includes(i) ? '✓' : '○'}</span>`).join('');
   $('#kSonucaGec').disabled = !done.length;
   const next = tpl.pages.findIndex((_, i) => !done.includes(i));
-  $('#kCek').textContent = next >= 0 ? `📷 ${next + 1}. sayfayı çek` : '📷 Sayfayı yeniden çek';
+  $('#kCek').textContent = next >= 0 ? `📷 Kamerayı aç (${next + 1}. sayfa)` : '📷 Kamerayı aç (yeniden çek)';
   $('#kOnizleme').innerHTML = Object.entries(scan.preview).map(([i, u]) => `<figure><img src="${u}" alt="${+i + 1}. sayfa"><figcaption>${+i + 1}. sayfa — yeşil: okundu</figcaption></figure>`).join('');
   if (!busy && !$('#kDurum').textContent) status(done.length ? '' : 'Kâğıdı düz bir zemine koyun, tamamı görünsün ve gölge düşmesin. Kâğıt arka plandan koyu renkte olursa en iyi sonucu verir.');
 }
 
 // ------------------------------------------------------------------ fotoğraf → okuma
+/** Bir sayfa görüntüsünü (tuval) şablona hizalar, kutuları okur ve oturuma yazar. @returns {{rejected:boolean, page?:number, warn:string[]}} */
+async function processCanvas(photo) {
+  const [cv, net] = await Promise.all([loadCV(), loadNet()]);
+  const refs = tpl.pages.map((p) => p.canvas);
+  const al = alignPage(cv, photo, refs, thumbs, null);
+  const warn = [];
+  if (!al.paperFound) warn.push('kâğıdın kenarları bulunamadı');
+  if (!al.refined) warn.push('ince hizalama yapılamadı');
+  if (al.score < 0.15 && !al.refined) return { rejected: true, warn }; // şablondaki hiçbir sayfaya benzemiyor
+  const tp = tpl.template;
+  const entries = [];
+  const add = (id, label, box, numeric, extra = {}) => { const r = readBox(al.canvas, refs[al.page], box, S, net, { numeric }); entries.push({ id, label, box, ...extra, ...r }); };
+  tp.blanks.forEach((b, i) => { if (b.page === al.page) add('s' + i, `${i + 1}. soru`, b, true, { index: i, max: exam.questions[i] ? exam.questions[i].max : b.max }); });
+  if (tp.no && tp.no.page === al.page) add('no', 'Öğrenci no', tp.no, true);
+  if (tp.total && tp.total.page === al.page) add('toplam', 'Toplam puan', tp.total, true);
+  if (tp.name && tp.name.page === al.page) add('ad', 'Ad soyad', tp.name, false);
+  if (tp.sinif && tp.sinif.page === al.page) add('sinif', 'Sınıf/şube', tp.sinif, false);
+  // önizleme: hizalanmış sayfa üzerinde kutular
+  const pv = mk(al.canvas.width, al.canvas.height), g = pv.getContext('2d'); g.drawImage(al.canvas, 0, 0);
+  g.lineWidth = 4;
+  for (const en of entries) { g.strokeStyle = en.text || !en.ink ? '#16a34a' : '#dc2626'; g.strokeRect(en.box.x * S, en.box.y * S, en.box.w * S, en.box.h * S); }
+  const small = mk(500, Math.round((500 * pv.height) / pv.width)); small.getContext('2d').drawImage(pv, 0, 0, small.width, small.height);
+  scan.pages[al.page] = entries; scan.preview[al.page] = small.toDataURL('image/jpeg', 0.8);
+  return { rejected: false, page: al.page, warn };
+}
+
+/** Galeriden / telefonun kendi kamera uygulamasından gelen dosyalar (ikincil yol) */
 async function onPhotos(files) {
   const list = [...files]; for (const id of ['#kCekInput', '#kGaleriInput']) $(id).value = '';
   if (!list.length || busy) return;
   busy = true; $('#kHata').textContent = '';
   try {
     status('Görüntü işleme motoru yükleniyor… (ilk kullanımda ~13 MB, sonra çevrimdışı çalışır)');
-    const [cv, net] = await Promise.all([loadCV(), loadNet()]);
-    const refs = tpl.pages.map((p) => p.canvas);
+    await Promise.all([loadCV(), loadNet()]);
     for (const [n, f] of list.entries()) {
       status(`Fotoğraf ${n + 1}/${list.length} işleniyor…`);
       await new Promise((r) => setTimeout(r, 30)); // arayüz güncellensin
-      const photo = await photoToCanvas(f, 2000);
-      const al = alignPage(cv, photo, refs, thumbs, null);
-      const tp = tpl.template;
-      const entries = [];
-      const add = (id, label, box, numeric, extra = {}) => { const r = readBox(al.canvas, refs[al.page], box, S, net, { numeric }); entries.push({ id, label, box, ...extra, ...r }); };
-      tp.blanks.forEach((b, i) => { if (b.page === al.page) add('s' + i, `${i + 1}. soru`, b, true, { index: i, max: exam.questions[i] ? exam.questions[i].max : b.max }); });
-      if (tp.no && tp.no.page === al.page) add('no', 'Öğrenci no', tp.no, true);
-      if (tp.total && tp.total.page === al.page) add('toplam', 'Toplam puan', tp.total, true);
-      if (tp.name && tp.name.page === al.page) add('ad', 'Ad soyad', tp.name, false);
-      if (tp.sinif && tp.sinif.page === al.page) add('sinif', 'Sınıf/şube', tp.sinif, false);
-      // önizleme: hizalanmış sayfa üzerinde kutular
-      const pv = mk(al.canvas.width, al.canvas.height), g = pv.getContext('2d'); g.drawImage(al.canvas, 0, 0);
-      g.lineWidth = 4;
-      for (const en of entries) { g.strokeStyle = en.text || !en.ink ? '#16a34a' : '#dc2626'; g.strokeRect(en.box.x * S, en.box.y * S, en.box.w * S, en.box.h * S); }
-      const small = mk(500, Math.round((500 * pv.height) / pv.width)); small.getContext('2d').drawImage(pv, 0, 0, small.width, small.height);
-      scan.pages[al.page] = entries; scan.preview[al.page] = small.toDataURL('image/jpeg', 0.8);
-      const warn = [];
-      if (!al.paperFound) warn.push('kâğıdın kenarları bulunamadı');
-      if (al.score < 0.15) warn.push('sayfa şablona benzemiyor');
-      if (!al.refined) warn.push('ince hizalama yapılamadı');
-      status(`${al.page + 1}. sayfa okundu.${warn.length ? ' Dikkat: ' + warn.join(', ') + ' — emin değilseniz yeniden çekin.' : ''}`, warn.length > 0);
+      const r = await processCanvas(await photoToCanvas(f, 2000));
+      status(r.rejected ? '✖ Bu fotoğraf şablondaki hiçbir sayfaya benzemiyor; atlandı.' : `${r.page + 1}. sayfa okundu.${r.warn.length ? ' Dikkat: ' + r.warn.join(', ') + ' — emin değilseniz yeniden çekin.' : ''}`, r.rejected || r.warn.length > 0);
     }
   } catch (err) {
     status('', false); $('#kHata').textContent = 'Fotoğraf işlenemedi: ' + (err && err.message ? err.message : err);
   } finally { busy = false; renderTara(); }
+}
+
+// ------------------------------------------------------------------ canlı kamera (📷'e basınca doğrudan açılır)
+let stream = null, camBusy = false, camGen = 0; // camGen: açılış sırasında kapatılırsa gelen akışı yoksaymak için
+const camStatus = (t, err) => { const el = $('#kKamDurum'); el.textContent = t || ''; el.className = err ? 'err' : ''; };
+function camInfo() {
+  const done = Object.keys(scan.pages).map(Number);
+  const next = tpl.pages.findIndex((_, i) => !done.includes(i));
+  $('#kKamBilgi').textContent = next >= 0 ? `Sayfa ${next + 1} / ${tpl.pages.length}` : `${tpl.pages.length} sayfa tamam · yeniden çek`;
+  $('#kKamBitti').disabled = !done.length;
+}
+async function openCamera() {
+  if (!tpl || stream || busy || $('#kKamera').hidden === false) return;
+  const my = ++camGen;
+  if (!scan) scan = { pages: {}, preview: {} };
+  $('#kKamera').hidden = false; document.body.style.overflow = 'hidden'; document.body.classList.add('kam-acik');
+  camInfo(); camStatus('Kamera açılıyor…');
+  loadCV().catch(() => {}); loadNet().catch(() => {}); // ilk çekimden önce motoru ısıt
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('desteklenmiyor'), { name: 'NotSupported' });
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
+    if (my !== camGen) { s.getTracks().forEach((t) => t.stop()); return; } // izin beklenirken kamera kapatıldı
+    stream = s;
+    const v = $('#kVideo'); v.srcObject = stream; await v.play();
+    camStatus('Kâğıdın tamamı çerçevede olsun, sonra çekin.');
+  } catch (e) {
+    if (my !== camGen) return;
+    closeCamera(); renderTara();
+    if (e && e.name === 'NotAllowedError') status('Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamerayı açın, sonra "Kamerayı aç"a basın.', true);
+    else $('#kCekInput').click(); // uygulama içi kamera yoksa telefonun kendi kamera uygulaması açılır
+  }
+}
+function closeCamera() {
+  camGen++;
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null; camBusy = false;
+  const v = $('#kVideo'); if (v) v.srcObject = null;
+  const o = $('#kKamera'); if (o) o.hidden = true;
+  document.body.style.overflow = ''; document.body.classList.remove('kam-acik');
+}
+async function shoot() {
+  const v = $('#kVideo');
+  if (camBusy || !stream || !v.videoWidth) return;
+  camBusy = true; $('#kKamCek').disabled = true;
+  const fl = $('#kFlash'); fl.classList.add('on'); setTimeout(() => fl.classList.remove('on'), 80);
+  const frame = mk(v.videoWidth, v.videoHeight); frame.getContext('2d').drawImage(v, 0, 0);
+  camStatus('Okunuyor…');
+  try {
+    await new Promise((r) => setTimeout(r, 30));
+    const r = await processCanvas(scaleCanvas(frame, 2000));
+    if (r.rejected) camStatus('✖ Sayfa tanınamadı. Kâğıdı çerçeveye alıp yeniden çekin.', true);
+    else if (Object.keys(scan.pages).length >= tpl.pages.length) { closeCamera(); renderTara(); showResults(); return; }
+    else { camInfo(); renderTara(); camStatus(`✓ ${r.page + 1}. sayfa okundu${r.warn.length ? ' (' + r.warn.join(', ') + ')' : ''}. Sıradaki sayfayı çekin.`, r.warn.length > 0); }
+  } catch (e) {
+    camStatus('Hata: ' + (e && e.message ? e.message : e), true);
+  } finally { camBusy = false; const b = $('#kKamCek'); if (b) b.disabled = false; if (stream) camInfo(); }
 }
 
 // ------------------------------------------------------------------ sonuç / onay
@@ -262,6 +330,7 @@ async function saveResults() {
   api.toast(`${st.no} ${st.name} kaydedildi. Sıradaki kâğıt.`, 'ok');
   scan = { pages: {}, preview: {} }; status('');
   $('#kSonuc').hidden = true; $('#kTara').hidden = false; renderTara();
+  openCamera(); // sıradaki öğrencinin kâğıdı
 }
 
 // ------------------------------------------------------------------ elle işaretleme (metin katmanı olmayan PDF'ler)

@@ -140,8 +140,8 @@
         <div class="k-pages" id="kSayfalar"></div>
         <p class="k-durum" id="kDurum"></p>
         <div class="k-actions">
-          <button class="primary big" id="kCek">📷 Kâğıdı çek</button>
-          <button id="kGaleri">🖼 Galeriden seç (birden çok sayfa)</button>
+          <button class="primary big" id="kCek">📷 Kamerayı aç</button>
+          <button class="link" id="kGaleri">Galeriden fotoğraf seç</button>
         </div>
         <input type="file" id="kCekInput" accept="image/*" capture="environment" hidden>
         <input type="file" id="kGaleriInput" accept="image/*" multiple hidden>
@@ -167,6 +167,13 @@
         <div class="k-actions"><button id="kElleGeri">↶ Geri al</button><button class="primary" id="kElleBitti" disabled>Bitti</button></div>
       </div>
     </main>
+    <div class="k-kamera" id="kKamera" hidden>
+      <video id="kVideo" playsinline muted autoplay></video>
+      <div class="k-kadraj" aria-hidden="true"></div>
+      <div class="k-kam-ust"><button id="kKamKapat" aria-label="Kamerayı kapat">✕</button><b id="kKamBilgi"></b><button id="kKamBitti" disabled>Bitti ›</button></div>
+      <div class="k-kam-alt"><p id="kKamDurum" role="status"></p><button id="kKamCek" aria-label="Fotoğraf çek"><i></i></button></div>
+      <div class="k-flash" id="kFlash"></div>
+    </div>
   </section>
 
   <!-- ============================================================ LİSTE -->
