@@ -1,6 +1,6 @@
 // Çevrimdışı çalışma: uygulama dosyalarını önbellekte tutar (öğrenci verisi önbelleğe GİRMEZ;
 // o yalnızca localStorage'dadır). Ağ isteği yalnızca uygulama dosyalarının güncellenmesi içindir.
-const CACHE = 'yna-mobil-v11'; // dosyalar değişince artırın
+const CACHE = 'yna-mobil-v12'; // dosyalar değişince artırın
 const ASSETS = [
   './',
   'index.html',
@@ -15,6 +15,7 @@ const ASSETS = [
   '../modules/qr-transfer.js',
   '../modules/paper-template.js',
   '../modules/digit-net.js',
+  '../modules/score-reconcile.js',
   '../modules/score-validator.js',
   '../modules/score-calculator.js',
   '../modules/export-manager.js',

@@ -2,6 +2,7 @@
 // öğretmene onaylatır ve sınav listesine yazar. Her şey cihazda yapılır; fotoğraflar saklanmaz ve hiçbir yere gönderilmez.
 import { itemsFromPdfjs, detectPage, buildTemplate } from '../modules/paper-template.js';
 import { validateScore } from '../modules/score-validator.js';
+import { reconcile } from '../modules/score-reconcile.js';
 import { loadCV, loadNet, photoToCanvas, scaleCanvas, alignPage, refThumbs, readBox } from './kagit-cv.js';
 
 const S = 2; // şablon ve hizalama ölçeği: px / pt
@@ -17,7 +18,7 @@ let scan = null; // { pages: {pageIdx: entries[]}, preview: {pageIdx: dataURL} }
 let busy = false;
 let tplFor = null; // şablonun ait olduğu sınav
 let pending = []; // şablon yokken çekilen sayfalar (PDF seçilince okunur)
-const SURUM = 'v11';
+const SURUM = 'v12';
 
 // ------------------------------------------------------------------ şablon deposu (IndexedDB; öğrenci verisi içermez, boş sınav kâğıdı)
 const db = () => new Promise((res, rej) => {
@@ -185,7 +186,7 @@ async function processCanvas(photo) {
   if (!al.ok) return { rejected: true, warn, al }; // hizalama güvenilir değil: yanlış yere okumamak için reddedilir
   const tp = tpl.template;
   const entries = [];
-  const add = (id, label, box, numeric, extra = {}) => { const r = readBox(al.canvas, refs[al.page], box, S, net, { numeric }); entries.push({ id, label, box, ...extra, ...r }); };
+  const add = (id, label, box, numeric, extra = {}) => { const r = readBox(al.canvas, refs[al.page], box, S, net, { numeric, frame: id[0] === 's' }); entries.push({ id, label, box, ...extra, ...r }); };
   tp.blanks.forEach((b, i) => { if (b.page === al.page) add('s' + i, `${i + 1}. soru`, b, true, { index: i, max: exam.questions[i] ? exam.questions[i].max : b.max }); });
   if (tp.no && tp.no.page === al.page) add('no', 'Öğrenci no', tp.no, true);
   if (tp.total && tp.total.page === al.page) add('toplam', 'Toplam puan', tp.total, true);
@@ -332,6 +333,12 @@ function showResults() {
   const opts = exam.students.map((s, i) => `<option value="${i}" ${i === m.idx ? 'selected' : ''}>${esc(s.no)} — ${esc(s.name)}</option>`).join('');
   const missingPages = tpl.pages.map((_, i) => i).filter((i) => !scan.pages[i]);
   const ad = en.find((e) => e.id === 'ad'), sinif = en.find((e) => e.id === 'sinif');
+  // OYSS kuralı: her soru 0..max ve soruların toplamı = kâğıttaki toplam. Rakam tanıyıcının ikinci/üçüncü tahminleriyle
+  // bu kurallara uyan en olası okuma önerilir; değişen kutular "kontrol edin" diye işaretlenir.
+  const uz = reconcile(exam.questions.map((q, i) => { const e = en.find((x) => x.id === 's' + i); return e ? { digits: e.digits || [], max: q.max } : null; }),
+    toplam && toplam.digits && toplam.digits.length ? { digits: toplam.digits } : null);
+  const ilkDeger = (i, e) => (uz.ok && uz.changed[i] ? uz.values[i] : e ? e.text : '');
+  const okunanToplam = uz.ok ? uz.total : toplam ? toplam.text : '';
   $('#kSonucGovde').innerHTML = `
     ${missingPages.length ? `<p class="warnbox">${missingPages.map((i) => i + 1).join(', ')}. sayfa çekilmedi; o sayfadaki sorular boş kalır.</p>` : ''}
     <div class="k-ogr">
@@ -343,7 +350,7 @@ function showResults() {
     <div class="k-sorular">${exam.questions.map((q, i) => {
       const e = en.find((x) => x.id === 's' + i);
       return `<div class="k-soru" data-i="${i}"><div class="k-lbl"><b>${i + 1}. soru</b><small>en fazla ${q.max}</small></div>${e ? crop(e) : '<span class="k-crop none">çekilmedi</span>'}
-        <input inputmode="numeric" data-i="${i}" value="${esc(e ? e.text : '')}" ${e ? '' : 'disabled'} autocomplete="off" aria-label="${i + 1}. soru puanı"><span class="k-flag" data-flag="${i}"></span></div>`;
+        <input inputmode="numeric" data-i="${i}" value="${esc(ilkDeger(i, e))}" ${e ? '' : 'disabled'} autocomplete="off" aria-label="${i + 1}. soru puanı"><span class="k-flag" data-flag="${i}"></span></div>`;
     }).join('')}</div>
     <div class="k-toplam">${crop(toplam)}<div><b>Toplam puan</b><div id="kToplamSonuc"></div></div></div>`;
   $('#kTara').hidden = true; $('#kSonuc').hidden = false;
@@ -359,15 +366,16 @@ function showResults() {
       if (inp.disabled) { t = ''; }
       else if (v.status === 'error') { t = v.message; cls = 'err'; bad++; }
       else if (v.status === 'empty') { t = e && e.ink > 0.002 ? 'boş okundu' : 'boş'; cls = 'warn'; }
+      else if (uz.ok && uz.changed[i] && inp.value === uz.values[i]) { t = `toplama göre düzeltildi (okunan ${e.text || 'boş'}), kontrol edin`; cls = 'warn'; }
       else if (e && e.conf && e.conf < 0.85 && inp.value === e.text) { t = 'emin değil'; cls = 'warn'; }
       if (v.status === 'ok') { sum += v.value; filled++; }
       flag.textContent = t; flag.className = 'k-flag ' + cls; inp.className = cls;
     });
     // toplam
-    const read = toplam && toplam.text !== '' ? +toplam.text : null;
+    const read = okunanToplam !== '' && okunanToplam != null ? +okunanToplam : null;
     const box = $('#kToplamSonuc');
     if (read == null) box.innerHTML = `Hesaplanan: <b>${sum}</b> <small>(kâğıttaki toplam okunamadı)</small>`;
-    else if (read === sum) box.innerHTML = `Hesaplanan <b>${sum}</b> = kâğıttaki <b>${read}</b> <span class="k-ok">✓ tutuyor</span>`;
+    else if (read === sum) box.innerHTML = `Hesaplanan <b>${sum}</b> = kâğıttaki <b>${read}</b> <span class="k-ok">✓ tutuyor</span>${uz.ok && uz.totalChanged ? `<br><small>Toplam kutusu "${esc(toplam.text)}" okunmuştu; sorularla uyumlu ${read} önerildi, kontrol edin.</small>` : ''}`;
     else box.innerHTML = `Hesaplanan <b>${sum}</b>, kâğıttaki <b>${read}</b> <span class="k-bad">✖ tutmuyor</span><br><small>Bir puan yanlış okunmuş ya da kâğıtta toplam hatalı olabilir.</small>`;
     // öğrenci
     const sel = +$('#kOgr').value;

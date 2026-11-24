@@ -48,13 +48,18 @@ export function detectPage(items, pageW, pageH) {
   out.blanks.sort((a, b) => a.y - b.y || a.x - b.x);
 
   // ---- başlık alanları
-  const no = locate(items, /[ÖO]ğrenci\s*Numaras[ıi]\s*:?/i)[0];
-  const sinif = locate(items, /S[ıi]n[ıi]f[ıi]?\s*\/\s*[ŞS]ubesi\s*:?/i)[0];
+  // Bazı PDF'lerde "Öğ" harfleri ayrı bir metin öğesine düşer ("renci Numarası:"): yalnızca "Numarası" da kabul edilir
+  const no = locate(items, /(?:[ÖO]ğ)?renci\s*Numaras[ıi]\s*:?/i)[0] || locate(items, /Numaras[ıi]\s*:?/i)[0];
+  // Türkçe harfler (Ş, Ö, ğ) bazı PDF'lerde ayrı öğeye düşer: kısmi eşleşmeler de kabul edilir
+  const sinif = locate(items, /S[ıi]n[ıi]f[ıi]?\s*\/\s*[ŞS]ubesi\s*:?/i)[0] || locate(items, /ubesi\s*:?/i)[0];
   const ad = locate(items, /Ad[ıi]\s*ve\s*Soyad[ıi]\s*:?/i)[0] || locate(items, /Soyad[ıi]\s*:/i)[0];
   const rightMargin = pageW - 34;
   if (no) out.no = { x: no.x + no.w + 2, y: no.y - 10, w: Math.max(30, rightMargin - (no.x + no.w + 2)), h: no.h + 16 };
-  if (sinif) out.sinif = { x: sinif.x + sinif.w + 2, y: sinif.y - 6, w: Math.max(30, (no ? no.x : rightMargin) - (sinif.x + sinif.w + 2) - 4), h: sinif.h + 12 };
-  if (ad) out.name = { x: ad.x + ad.w + 2, y: ad.y - 6, w: Math.max(30, (sinif ? sinif.x : rightMargin) - (ad.x + ad.w + 2) - 4), h: ad.h + 12 };
+  const noBas = no ? no.x - (/^(renci|Numara)/i.test(no.m[0]) ? 22 : 0) : rightMargin; // "Öğ" ayrı öğedeyse etiketin gerçek başı daha soldadır
+  if (sinif) out.sinif = { x: sinif.x + sinif.w + 2, y: sinif.y - 6, w: Math.max(30, noBas - (sinif.x + sinif.w + 2) - 4), h: sinif.h + 12 };
+  // ad alanı, aynı satırdaki bir sonraki etikete (sınıf ya da no) kadar uzanır
+  const sonraki = [sinif, no].filter((f) => f && ad && f.x > ad.x).map((f) => f.x - (f === sinif && /^ubesi/i.test(f.m[0]) ? 50 : 0));
+  if (ad) out.name = { x: ad.x + ad.w + 2, y: ad.y - 6, w: Math.max(30, (sonraki.length ? Math.min(...sonraki) : rightMargin) - (ad.x + ad.w + 2) - 4), h: ad.h + 12 };
 
   // ---- "Toplam Puan" kutusu (etiketin altı)
   const top = locate(items, /Toplam\s*Puan/i)[0] || locate(items, /Toplam/i)[0];

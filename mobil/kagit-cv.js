@@ -349,38 +349,13 @@ function dogrudanHizala(cv, photo, refs, beklenen) {
   } finally { A.des.delete(); }
 }
 
-// ------------------------------------------------------------------ ECC (yoğunluk tabanlı) ince hizalama
-// ORB, düşük çözünürlüklü/bulanık karelerde yeterli özellik bulamayabilir. ECC, görüntünün tamamının benzerliğini
-// (metin satırları, tablo çizgileri) en çoklayarak küçük kaymaları düzeltir; kaba hizalama zaten yakın olmalıdır.
-function refineECC(cv, warped, ref) {
-  const mats = [];
-  const T = (m) => (mats.push(m), m);
-  try {
-    const k = 3, sz = new cv.Size(Math.round(ref.width / k), Math.round(ref.height / k));
-    const prep = (cnv) => { const m = T(cv.imread(cnv)), g = T(new cv.Mat()), s = T(new cv.Mat()); cv.cvtColor(m, g, cv.COLOR_RGBA2GRAY); cv.resize(g, s, sz, 0, 0, cv.INTER_AREA); cv.GaussianBlur(s, s, new cv.Size(5, 5), 0); return s; };
-    const aS = prep(warped), bS = prep(ref);
-    const warp = T(cv.Mat.eye(3, 3, cv.CV_32F));
-    const crit = new cv.TermCriteria(cv.TermCriteria_COUNT + cv.TermCriteria_EPS, 70, 1e-5);
-    const cc = cv.findTransformECC(bS, aS, warp, cv.MOTION_HOMOGRAPHY, crit, T(new cv.Mat()), 5);
-    if (!(cc > 0)) return null;
-    // küçük ölçekteki dönüşümü tam ölçeğe taşı: Hf = S · W · S⁻¹ (S = diag(k, k, 1))
-    const w = warp.data32F, Hf = new Float64Array(9);
-    for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) Hf[r * 3 + q] = (w[r * 3 + q] * (r < 2 ? k : 1)) / (q < 2 ? k : 1);
-    const src = T(cv.imread(warped)), dst = T(new cv.Mat()), H = T(cv.matFromArray(3, 3, cv.CV_64F, Array.from(Hf)));
-    cv.warpPerspective(src, dst, H, new cv.Size(ref.width, ref.height), cv.INTER_LINEAR + cv.WARP_INVERSE_MAP, cv.BORDER_REPLICATE);
-    const out = mk(ref.width, ref.height);
-    cv.imshow(out, dst);
-    return { canvas: out, cc };
-  } catch (e) {
-    return null; // yakınsamadı
-  } finally { mats.forEach((m) => m.delete()); }
-}
-
 /**
  * Fotoğrafı şablon sayfasına hizalar. Sonuçtaki `ok` güvenilirliği söyler: yanlış sayfaya/yere okumamak için
  * ok=false ise çekim reddedilmelidir.
  * 1) Doğrudan özellik eşleştirmesi (kâğıdı bulmadan, ölçek/döndürmeden bağımsız).
- * 2) Kâğıt köşeleri → 4 yön × sayfa seçimi (yüksek geçirgen korelasyon) → ORB ince hizalama, olmazsa ECC.
+ * 2) Kâğıt köşeleri → 4 yön × sayfa seçimi (yüksek geçirgen korelasyon) → ORB ince hizalama.
+ * Not: ECC (findTransformECC) bilerek KULLANILMAZ: yakınsamadığında OpenCV.js belleğini bozuyor ve farklı kâğıtlarda bile
+ * yüksek korelasyon verebiliyor (yanlış sayfayı kabul ettirir).
  * @param {HTMLCanvasElement} photo
  * @param {HTMLCanvasElement[]} refs şablon sayfa görüntüleri (aynı ölçek)
  * @param {Float32Array[]} thumbs refThumbs(refs)
@@ -398,7 +373,7 @@ export function alignPage(cv, photo, refs, thumbs, expected = null) {
   const paperFound = !!quad;
   if (!quad) quad = [[0, 0], [photo.width, 0], [photo.width, photo.height], [0, photo.height]];
   // En iyi birkaç (yön, sayfa) adayı gerçekten hizalanıp sınanır; ince hizalama sonucu en yüksek olan seçilir.
-  // Yanlış sayfa ORB'da az eşleşme, ECC'de düşük korelasyon verir.
+  // Yanlış sayfa ORB'da az eşleşme verir; ORB ile doğrulanamayan çekim reddedilir.
   const sonuclar = [];
   for (const o of adayYonler(cv, photo, quad, thumbs, expected)) {
     const q = quad.slice(o.rot).concat(quad.slice(0, o.rot));
@@ -406,16 +381,13 @@ export function alignPage(cv, photo, refs, thumbs, expected = null) {
     const canvas = warpQuad(cv, photo, q, ref.width, ref.height);
     let r = null;
     try { r = refineORB(cv, canvas, ref); } catch (e) { r = null; }
-    if (r) { sonuclar.push({ q: 10 + r.inliers / 100, canvas: r.canvas, inliers: r.inliers, yontem: 'kose+orb', o }); continue; }
-    const e = refineECC(cv, canvas, ref);
-    if (e) sonuclar.push({ q: e.cc, canvas: e.canvas, inliers: 0, ecc: e.cc, yontem: 'kose+ecc', o });
-    else sonuclar.push({ q: 0, canvas, inliers: 0, ecc: 0, yontem: 'kose', o });
+    if (r) sonuclar.push({ q: r.inliers, canvas: r.canvas, inliers: r.inliers, yontem: 'kose+orb', o });
+    else sonuclar.push({ q: 0, canvas, inliers: 0, yontem: 'kose', o });
   }
   sonuclar.sort((x, y) => y.q - x.q);
   const s = sonuclar[0], iki = sonuclar[1] ? sonuclar[1].q : 0;
-  const orb = s.q >= 10;
-  const ok = orb || (s.ecc >= 0.75 && s.q - iki >= 0.1); // ECC tek başına yanıltabilir (farklı sınavda bile ~0.55): yüksek eşik
-  return { ok, canvas: s.canvas, refined: ok, inliers: s.inliers, ecc: s.ecc || 0, yontem: s.yontem, page: s.o.page, score: s.o.score, margin: s.q - iki, paperFound, rot: s.o.rot, ozellikInliers: d ? d.inliers : 0 };
+  const ok = s.q > 0 && (iki === 0 || s.q >= 1.3 * iki); // ORB doğruladı ve ikinci adaydan belirgin iyi
+  return { ok, canvas: s.canvas, refined: s.q > 0, inliers: s.inliers, yontem: s.yontem, page: s.o.page, score: s.o.score, margin: s.q - iki, paperFound, rot: s.o.rot, ozellikInliers: d ? d.inliers : 0 };
 }
 
 // ------------------------------------------------------------------ mürekkep (el yazısı) çıkarma
@@ -449,10 +421,25 @@ export function inkMask(photo, ref, dilateR = 3) {
  * Hizalanmış sayfadan bir kutuyu (PDF pt) kırpar, el yazısını çıkarır ve (sayı alanıysa) okur.
  * @returns {{crop:string, text:string, conf:number, ink:number, digits:object[], noise:number}}
  */
-export function readBox(aligned, ref, box, S, net, { numeric = true, debug = false } = {}) {
-  const x = Math.max(0, Math.floor(box.x * S)), y = Math.max(0, Math.floor(box.y * S));
-  const w = Math.min(aligned.width - x, Math.ceil(box.w * S)), h = Math.min(aligned.height - y, Math.ceil(box.h * S));
+/**
+ * Okuma alanı basılı bir çerçevenin (ör. "| ___ / 16 puan |" kutusu) kenarını içine alıyorsa alanı çerçevenin içine daraltır.
+ * Basılı çizgiler mürekkep maskesinden silindiği için çizginin üstüne denk gelen rakam parçası ("1") da silinirdi.
+ * Dikey çizgi: sütundaki koyu piksel oranı alan yüksekliğinin %45'ini aşar. Yalnızca sol kenar (sağ sınır zaten "/" işaretidir).
+ * @returns {{l:number, r:number}} piksel sınırları
+ */
+export function cerceveIci(refData, w, h) {
+  const col = new Float32Array(w);
+  for (let x = 0; x < w; x++) { let k = 0; for (let y = 0; y < h; y++) { const i = (y * w + x) * 4; if (Math.min(refData[i], refData[i + 1], refData[i + 2]) < 140) k++; } col[x] = k / h; }
+  let l = 0, r = w;
+  for (let x = 0; x < Math.floor(w * 0.4); x++) if (col[x] > 0.45) l = x + 3;
+  return r - l >= 12 ? { l, r } : { l: 0, r: w };
+}
+
+export function readBox(aligned, ref, box, S, net, { numeric = true, debug = false, frame = false } = {}) {
+  let x = Math.max(0, Math.floor(box.x * S)), y = Math.max(0, Math.floor(box.y * S));
+  let w = Math.min(aligned.width - x, Math.ceil(box.w * S)), h = Math.min(aligned.height - y, Math.ceil(box.h * S));
   if (w < 8 || h < 8) return { crop: '', text: '', conf: 0, ink: 0, digits: [], noise: 0 };
+  if (frame) { const k = cerceveIci(ref.getContext('2d').getImageData(x, y, w, h).data, w, h); x += k.l; w -= k.l; } // yalnızca soldaki çerçeve kenarı
   const pa = aligned.getContext('2d').getImageData(x, y, w, h);
   const pr = ref.getContext('2d').getImageData(x, y, w, h);
   const c = mk(w, h);
@@ -470,3 +457,6 @@ export function readBox(aligned, ref, box, S, net, { numeric = true, debug = fal
   }
   return { crop, text: r.text, conf: r.conf, ink, digits: r.digits, noise: r.noise, maskUrl };
 }
+
+/** Yalnızca tanılama/test için (bellek sızıntısı avı) */
+export const _dbg = { dogrudanHizala, refineORB, adayYonler };

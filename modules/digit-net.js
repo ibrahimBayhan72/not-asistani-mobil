@@ -138,6 +138,23 @@ export function readNumber(mask, w, h, net, { minArea = 0.004, maxDigits = 3 } =
   }
   const minPx = Math.max(6, minArea * w * h);
   const bwOf = (c) => c.x1 - c.x0 + 1, bhOf = (c) => c.y1 - c.y0 + 1;
+  // Basılı yatay çizgi (kutu çerçevesi, "___") silinince rakam yatay olarak ikiye kopabilir: üst üste duran ve yatayda büyük
+  // ölçüde örtüşen parçalar aynı rakam sayılıp birleştirilir.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let i = 0; i < comps.length && !changed; i++) for (let j = 0; j < comps.length && !changed; j++) {
+      const a = comps[i], b = comps[j];
+      if (i === j || a.y0 > b.y0) continue; // a üstte
+      const ov = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
+      const gap = b.y0 - a.y1;
+      if (ov < 0.5 * Math.min(bwOf(a), bwOf(b)) || gap > 0.25 * h || gap < -0.3 * Math.min(bhOf(a), bhOf(b))) continue;
+      // birleşim kutuyu belirgin genişletmemeli (komşu rakamın parçası olmasın)
+      if (Math.max(a.x1, b.x1) - Math.min(a.x0, b.x0) + 1 > 1.15 * Math.max(bwOf(a), bwOf(b))) continue;
+      for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (lab[y * w + x] === b.id) lab[y * w + x] = a.id;
+      a.area += b.area; a.x0 = Math.min(a.x0, b.x0); a.y0 = Math.min(a.y0, b.y0); a.x1 = Math.max(a.x1, b.x1); a.y1 = Math.max(a.y1, b.y1);
+      comps.splice(j, 1); changed = true;
+    }
+  }
   // ince/küçük lekeler ve kutu çizgisi artıkları (kırpık kenarına değen ince parçalar) rakam değildir
   let keep = comps.filter((c) => {
     if (c.area < minPx || bhOf(c) < h * 0.18) return false;
@@ -191,7 +208,7 @@ export function readNumber(mask, w, h, net, { minArea = 0.004, maxDigits = 3 } =
     if (ratio > 1.1) segs = splitCols(c, Math.min(3, Math.max(2, Math.round(bwOf(c) / (0.75 * bhOf(c))))));
     for (const [xa, xb] of segs) {
       const r = cls(c, xa, xb);
-      if (r) digits.push({ digit: r.digit, prob: r.prob, box: [xa, c.y0, xb, c.y1] });
+      if (r) digits.push({ digit: r.digit, prob: r.prob, probs: Array.from(r.probs), box: [xa, c.y0, xb, c.y1] });
     }
   }
   digits.sort((a, b) => a.box[0] - b.box[0]);
