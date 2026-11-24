@@ -1,6 +1,6 @@
 // Çevrimdışı çalışma: uygulama dosyalarını önbellekte tutar (öğrenci verisi önbelleğe GİRMEZ;
 // o yalnızca localStorage'dadır). Ağ isteği yalnızca uygulama dosyalarının güncellenmesi içindir.
-const CACHE = 'yna-mobil-v10'; // dosyalar değişince artırın
+const CACHE = 'yna-mobil-v11'; // dosyalar değişince artırın
 const ASSETS = [
   './',
   'index.html',

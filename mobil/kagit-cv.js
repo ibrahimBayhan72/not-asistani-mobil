@@ -57,60 +57,118 @@ const orderCorners = (p) => {
 };
 
 // ------------------------------------------------------------------ kâğıdı bul
-function bestQuad(cv, bin, minArea) {
+const A4_ORAN = 0.707;
+const quadAlan = (q) => Math.abs(q.reduce((s, p, i) => s + p[0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * p[1], 0)) / 2;
+/** Aday dörtgenin kâğıda benzerliği (0..1): A4 en/boy oranı ve konturun dörtgeni doldurması */
+function quadScore(q, konturAlan, resimAlan) {
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const w = (d(q[0], q[1]) + d(q[3], q[2])) / 2, h = (d(q[0], q[3]) + d(q[1], q[2])) / 2;
+  const oran = Math.min(w, h) / Math.max(w, h);
+  const alan = quadAlan(q), ar = alan / resimAlan;
+  if (ar < 0.1 || ar > 0.99) return 0;
+  const doluluk = Math.min(1, konturAlan / alan);
+  return (1 - Math.min(1, Math.abs(oran - A4_ORAN) / 0.25)) * doluluk * doluluk;
+}
+/** İkili maskeden aday dörtgenler üretir: köşegen yaklaşıklaştırma + en küçük dönük dikdörtgen */
+function adaylar(cv, bin, resimAlan) {
+  const out = [];
   const contours = new cv.MatVector(), hier = new cv.Mat();
-  let best = null, bestA = 0;
   try {
     cv.findContours(bin, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    for (let i = 0; i < contours.size(); i++) {
+    const list = [];
+    for (let i = 0; i < contours.size(); i++) { const c = contours.get(i); list.push({ i, a: cv.contourArea(c) }); c.delete(); }
+    list.sort((x, y) => y.a - x.a);
+    for (const { i, a } of list.slice(0, 4)) {
+      if (a < resimAlan * 0.1) continue;
       const c = contours.get(i);
-      const a = cv.contourArea(c);
-      if (a > minArea && a > bestA) {
-        const peri = cv.arcLength(c, true);
-        const ap = new cv.Mat();
-        for (const eps of [0.02, 0.03, 0.045]) {
-          cv.approxPolyDP(c, ap, eps * peri, true);
-          if (ap.rows === 4 && (!cv.isContourConvex || cv.isContourConvex(ap))) {
-            best = Array.from({ length: 4 }, (_, j) => [ap.data32S[j * 2], ap.data32S[j * 2 + 1]]);
-            bestA = a;
-            break;
-          }
+      const peri = cv.arcLength(c, true);
+      const ap = new cv.Mat();
+      for (const eps of [0.015, 0.03, 0.05]) {
+        cv.approxPolyDP(c, ap, eps * peri, true);
+        if (ap.rows === 4 && (!cv.isContourConvex || cv.isContourConvex(ap))) {
+          const q = Array.from({ length: 4 }, (_, j) => [ap.data32S[j * 2], ap.data32S[j * 2 + 1]]);
+          out.push({ q: orderCorners(q), s: quadScore(q, a, resimAlan) });
+          break;
         }
-        ap.delete();
+      }
+      ap.delete();
+      if (cv.minAreaRect && cv.RotatedRect && cv.RotatedRect.points) {
+        const q = cv.RotatedRect.points(cv.minAreaRect(c)).map((p) => [p.x, p.y]);
+        out.push({ q: orderCorners(q), s: quadScore(q, a, resimAlan) * 0.97 });
       }
       c.delete();
     }
   } finally { contours.delete(); hier.delete(); }
-  return best;
+  return out;
 }
-/** @returns {[number,number][]|null} sol-üst, sağ-üst, sağ-alt, sol-alt (fotoğraf pikseli) */
+/**
+ * Fotoğrafta kâğıdın 4 köşesini bulur. Kâğıt nötr (düşük doygunluk) ve açık renklidir; masa genellikle renklidir (ahşap vb.).
+ * Bu yüzden önce renk (doygunluk) ayrımı, yedek olarak gri tonlama eşiği ve kenar tabanlı yöntemler denenir;
+ * hepsinin adayları A4 en/boy oranına ve dikdörtgenliğe göre puanlanır, en iyisi seçilir.
+ * @returns {[number,number][]|null} sol-üst, sağ-üst, sağ-alt, sol-alt (fotoğraf pikseli)
+ */
 export function findPaperCorners(cv, canvas) {
   const mats = [];
   const T = (m) => (mats.push(m), m);
   try {
     const src = T(cv.imread(canvas));
-    const gray = T(new cv.Mat());
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     const sc = 640 / Math.max(canvas.width, canvas.height);
     const small = T(new cv.Mat());
-    cv.resize(gray, small, new cv.Size(Math.round(canvas.width * sc), Math.round(canvas.height * sc)), 0, 0, cv.INTER_AREA);
+    cv.resize(src, small, new cv.Size(Math.round(canvas.width * sc), Math.round(canvas.height * sc)), 0, 0, cv.INTER_AREA);
     cv.GaussianBlur(small, small, new cv.Size(5, 5), 0);
-    const minArea = small.cols * small.rows * 0.2;
-    let q = null;
-    // A: Otsu — açık renkli kâğıt koyu zeminde; yazılar kapama ile kâğıda katılır
-    const bin = T(new cv.Mat());
-    cv.threshold(small, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-    const k = T(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(17, 17)));
-    cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, k);
-    q = bestQuad(cv, bin, minArea);
-    // B: kenar tabanlı yedek
-    if (!q) {
-      const ed = T(new cv.Mat());
-      cv.Canny(small, ed, 40, 120);
-      cv.dilate(ed, ed, k);
-      q = bestQuad(cv, ed, minArea);
+    const resimAlan = small.cols * small.rows;
+    const all = [];
+    const k21 = T(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(21, 21)));
+    const k7 = T(cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 7)));
+
+    // A: renk — kâğıt nötr/mavimsi (R ≤ B), ahşap ve benzeri masa yüzeyleri kırmızımsıdır (R − B büyük).
+    //    Güneşten solmuş ahşapta bile R − B kâğıttakinden belirgin yüksektir; doygunluk eşiğinden daha ayırt edicidir.
+    const rgb = T(new cv.Mat()), hsv = T(new cv.Mat());
+    cv.cvtColor(small, rgb, cv.COLOR_RGBA2RGB);
+    cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
+    const rgbCh = T(new cv.MatVector());
+    cv.split(rgb, rgbCh);
+    const R = T(rgbCh.get(0)), B = T(rgbCh.get(2));
+    const hsvCh = T(new cv.MatVector());
+    cv.split(hsv, hsvCh);
+    const V = T(hsvCh.get(2)), S = T(hsvCh.get(1));
+    const vm = T(new cv.Mat());
+    cv.threshold(V, vm, 100, 255, cv.THRESH_BINARY);
+    {
+      const D = T(new cv.Mat()), dm = T(new cv.Mat()), renk = T(new cv.Mat());
+      cv.subtract(R, B, D); // doygun çıkarma: R ≤ B ise 0
+      cv.threshold(D, dm, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+      cv.bitwise_and(dm, vm, renk);
+      cv.morphologyEx(renk, renk, cv.MORPH_CLOSE, k21);
+      cv.morphologyEx(renk, renk, cv.MORPH_OPEN, k7);
+      all.push(...adaylar(cv, renk, resimAlan));
     }
-    return q ? orderCorners(q.map(([x, y]) => [x / sc, y / sc])) : null;
+    {
+      // A2: düşük doygunluk (S ≤ Otsu)
+      const sm = T(new cv.Mat()), renk = T(new cv.Mat());
+      cv.threshold(S, sm, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+      cv.bitwise_and(sm, vm, renk);
+      cv.morphologyEx(renk, renk, cv.MORPH_CLOSE, k21);
+      cv.morphologyEx(renk, renk, cv.MORPH_OPEN, k7);
+      all.push(...adaylar(cv, renk, resimAlan).map((x) => ({ ...x, s: x.s * 0.97 })));
+    }
+
+    // B: gri tonlama Otsu (koyu zemin üzerinde açık kâğıt)
+    const gray = T(new cv.Mat()), bin = T(new cv.Mat());
+    cv.cvtColor(small, gray, cv.COLOR_RGBA2GRAY);
+    cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, k21);
+    all.push(...adaylar(cv, bin, resimAlan).map((x) => ({ ...x, s: x.s * 0.9 })));
+
+    // C: kenar tabanlı yedek
+    const ed = T(new cv.Mat());
+    cv.Canny(gray, ed, 40, 120);
+    cv.dilate(ed, ed, k21);
+    all.push(...adaylar(cv, ed, resimAlan).map((x) => ({ ...x, s: x.s * 0.8 })));
+
+    all.sort((x, y) => y.s - x.s);
+    const best = all[0];
+    return best && best.s >= 0.3 ? best.q.map(([x, y]) => [x / sc, y / sc]) : null;
   } finally { mats.forEach((m) => m.delete()); }
 }
 
@@ -128,15 +186,31 @@ export function warpQuad(cv, canvas, quad, W, H) {
   } finally { [src, dst, from, to, M].forEach((m) => m.delete()); }
 }
 
-// ------------------------------------------------------------------ yön ve sayfa tespiti (küçük resimlerde NCC)
-const TW = 96, TH = 136;
+// ------------------------------------------------------------------ yön ve sayfa tespiti (küçük resimlerde korelasyon)
+// Işık/gölge etkisini atmak için görüntüden bulanık hâli çıkarılır (yüksek geçiren filtre): geriye metin satırları,
+// tablo çizgileri ve başlık blokları kalır; bunlar sayfaya özgüdür ve 4 yön ile sayfa seçimini ayırt eder.
+const TW = 160, TH = 226;
+function boxBlur(src, w, h, r) {
+  const W1 = w + 1, I = new Float64Array(W1 * (h + 1)), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) I[(y + 1) * W1 + x + 1] = src[y * w + x] + I[y * W1 + x + 1] + I[(y + 1) * W1 + x] - I[y * W1 + x];
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+      out[y * w + x] = (I[y1 * W1 + x1] - I[y0 * W1 + x1] - I[y1 * W1 + x0] + I[y0 * W1 + x0]) / ((x1 - x0) * (y1 - y0));
+    }
+  }
+  return out;
+}
 function thumbOf(canvas) {
   const c = mk(TW, TH), g = c.getContext('2d');
   g.imageSmoothingQuality = 'high';
   g.drawImage(canvas, 0, 0, TW, TH);
-  const d = g.getImageData(0, 0, TW, TH).data, v = new Float32Array(TW * TH);
+  const d = g.getImageData(0, 0, TW, TH).data, lum = new Float32Array(TW * TH);
+  for (let i = 0; i < lum.length; i++) lum[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+  const bl = boxBlur(lum, TW, TH, 7), v = new Float32Array(TW * TH);
   let m = 0;
-  for (let i = 0; i < v.length; i++) { v[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; m += v[i]; }
+  for (let i = 0; i < v.length; i++) { v[i] = lum[i] - bl[i]; m += v[i]; }
   m /= v.length;
   let s = 0;
   for (let i = 0; i < v.length; i++) { v[i] -= m; s += v[i] * v[i]; }
@@ -145,21 +219,17 @@ function thumbOf(canvas) {
   return v;
 }
 const ncc = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s / a.length; };
-/** refThumbs: şablon sayfalarının küçük resimleri (thumbOf). expected verilirse yalnızca o sayfaya bakılır. */
+/** refThumbs: şablon sayfalarının küçük resimleri (thumbOf). */
 export function refThumbs(refCanvases) { return refCanvases.map(thumbOf); }
-function bestOrientation(cv, photo, quad, thumbs, expected) {
-  let best = { score: -2, rot: 0, page: 0 };
+/** 4 yön × şablon sayfaları içinde en iyi eşleşmeyi (ve ikinciyi) bulur; expected verilirse yalnızca o sayfaya bakılır. */
+function adayYonler(cv, photo, quad, thumbs, expected, n = 3) {
+  const list = [];
   for (let r = 0; r < 4; r++) {
     const q = quad.slice(r).concat(quad.slice(0, r));
-    const small = warpQuad(cv, photo, q, TW * 2, TH * 2);
-    const t = thumbOf(small);
-    thumbs.forEach((rt, p) => {
-      if (expected != null && p !== expected) return;
-      const sc = ncc(t, rt);
-      if (sc > best.score) best = { score: sc, rot: r, page: p };
-    });
+    const t = thumbOf(warpQuad(cv, photo, q, TW * 2, TH * 2));
+    thumbs.forEach((rt, p) => { if (expected == null || p === expected) list.push({ score: ncc(t, rt), rot: r, page: p }); });
   }
-  return best;
+  return list.sort((x, y) => y.score - x.score).slice(0, n);
 }
 
 // ------------------------------------------------------------------ ORB + homografi ile ince hizalama
@@ -209,27 +279,143 @@ function refineORB(cv, warped, ref) {
   } finally { mats.forEach((m) => m.delete()); }
 }
 
+// ------------------------------------------------------------------ doğrudan özellik eşleştirmesi
+// Fotoğraftaki ORB özelliklerini şablon sayfalarınınkilerle eşleştirir (ölçek ve döndürmeden bağımsız); kâğıdın kenarlarını
+// bulmaya gerek kalmaz: kâğıt kadrajda küçük de olsa, masa renkli/açık da olsa, ters de çekilse çalışır.
+const refOzellik = new WeakMap();
+function ozellikler(cv, canvas, nfeat) {
+  const m = cv.imread(canvas), g = new cv.Mat(), mask = new cv.Mat();
+  const orb = new cv.ORB(nfeat), kp = new cv.KeyPointVector(), des = new cv.Mat();
+  try {
+    cv.cvtColor(m, g, cv.COLOR_RGBA2GRAY);
+    orb.detectAndCompute(g, mask, kp, des);
+    const pts = new Float32Array(kp.size() * 2);
+    for (let i = 0; i < kp.size(); i++) { const p = kp.get(i).pt; pts[i * 2] = p.x; pts[i * 2 + 1] = p.y; }
+    return { des, pts, n: kp.size() };
+  } finally { m.delete(); g.delete(); mask.delete(); orb.delete(); kp.delete(); }
+}
+function refOz(cv, canvas) {
+  let o = refOzellik.get(canvas);
+  if (!o) { o = ozellikler(cv, canvas, 3000); refOzellik.set(canvas, o); }
+  return o;
+}
+/** İki özellik kümesini eşleştirir (oran testi) ve RANSAC homografisi (kaynak → hedef) bulur */
+function esle(cv, A, B) {
+  const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+  const mm = new cv.DMatchVectorVector();
+  const sp = [], dp = [];
+  try {
+    bf.knnMatch(A.des, B.des, mm, 2);
+    for (let i = 0; i < mm.size(); i++) {
+      const v = mm.get(i);
+      if (v.size() < 2) { v.delete(); continue; }
+      const m1 = v.get(0), m2 = v.get(1);
+      if (m1.distance < 0.78 * m2.distance) { sp.push(A.pts[m1.queryIdx * 2], A.pts[m1.queryIdx * 2 + 1]); dp.push(B.pts[m1.trainIdx * 2], B.pts[m1.trainIdx * 2 + 1]); }
+      v.delete();
+    }
+  } finally { mm.delete(); bf.delete(); }
+  const n = sp.length / 2;
+  if (n < 12) return { n, inliers: 0, H: null };
+  const S = cv.matFromArray(n, 1, cv.CV_32FC2, sp), D = cv.matFromArray(n, 1, cv.CV_32FC2, dp), mask = new cv.Mat();
+  let H = null, inl = 0;
+  try {
+    const h = cv.findHomography(S, D, cv.RANSAC, 4.0, mask);
+    if (!h.empty()) { for (let i = 0; i < mask.rows; i++) if (mask.data[i]) inl++; H = h; } else h.delete();
+  } finally { S.delete(); D.delete(); mask.delete(); }
+  return { n, inliers: inl, H };
+}
+/** @returns {{canvas, page, inliers, ikinci}|null} */
+function dogrudanHizala(cv, photo, refs, beklenen) {
+  const A = ozellikler(cv, photo, 3000);
+  try {
+    if (A.n < 30) return null;
+    let best = null, ikinci = 0;
+    refs.forEach((ref, p) => {
+      if (beklenen != null && p !== beklenen) return;
+      const r = esle(cv, A, refOz(cv, ref));
+      if (!best || r.inliers > best.inliers) { if (best && best.H) { ikinci = Math.max(ikinci, best.inliers); best.H.delete(); } best = { ...r, page: p }; }
+      else { ikinci = Math.max(ikinci, r.inliers); if (r.H) r.H.delete(); }
+    });
+    if (!best || !best.H || best.inliers < 25 || (beklenen == null && refs.length > 1 && best.inliers < 1.4 * ikinci)) { if (best && best.H) best.H.delete(); return { inliers: best ? best.inliers : 0, ikinci, ok: false }; }
+    // fotoğrafı şablon sayfasına çevir
+    const ref = refs[best.page];
+    const src = cv.imread(photo), dst = new cv.Mat();
+    try {
+      cv.warpPerspective(src, dst, best.H, new cv.Size(ref.width, ref.height), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+      const out = mk(ref.width, ref.height);
+      cv.imshow(out, dst);
+      return { ok: true, canvas: out, page: best.page, inliers: best.inliers, ikinci };
+    } finally { src.delete(); dst.delete(); best.H.delete(); }
+  } finally { A.des.delete(); }
+}
+
+// ------------------------------------------------------------------ ECC (yoğunluk tabanlı) ince hizalama
+// ORB, düşük çözünürlüklü/bulanık karelerde yeterli özellik bulamayabilir. ECC, görüntünün tamamının benzerliğini
+// (metin satırları, tablo çizgileri) en çoklayarak küçük kaymaları düzeltir; kaba hizalama zaten yakın olmalıdır.
+function refineECC(cv, warped, ref) {
+  const mats = [];
+  const T = (m) => (mats.push(m), m);
+  try {
+    const k = 3, sz = new cv.Size(Math.round(ref.width / k), Math.round(ref.height / k));
+    const prep = (cnv) => { const m = T(cv.imread(cnv)), g = T(new cv.Mat()), s = T(new cv.Mat()); cv.cvtColor(m, g, cv.COLOR_RGBA2GRAY); cv.resize(g, s, sz, 0, 0, cv.INTER_AREA); cv.GaussianBlur(s, s, new cv.Size(5, 5), 0); return s; };
+    const aS = prep(warped), bS = prep(ref);
+    const warp = T(cv.Mat.eye(3, 3, cv.CV_32F));
+    const crit = new cv.TermCriteria(cv.TermCriteria_COUNT + cv.TermCriteria_EPS, 70, 1e-5);
+    const cc = cv.findTransformECC(bS, aS, warp, cv.MOTION_HOMOGRAPHY, crit, T(new cv.Mat()), 5);
+    if (!(cc > 0)) return null;
+    // küçük ölçekteki dönüşümü tam ölçeğe taşı: Hf = S · W · S⁻¹ (S = diag(k, k, 1))
+    const w = warp.data32F, Hf = new Float64Array(9);
+    for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) Hf[r * 3 + q] = (w[r * 3 + q] * (r < 2 ? k : 1)) / (q < 2 ? k : 1);
+    const src = T(cv.imread(warped)), dst = T(new cv.Mat()), H = T(cv.matFromArray(3, 3, cv.CV_64F, Array.from(Hf)));
+    cv.warpPerspective(src, dst, H, new cv.Size(ref.width, ref.height), cv.INTER_LINEAR + cv.WARP_INVERSE_MAP, cv.BORDER_REPLICATE);
+    const out = mk(ref.width, ref.height);
+    cv.imshow(out, dst);
+    return { canvas: out, cc };
+  } catch (e) {
+    return null; // yakınsamadı
+  } finally { mats.forEach((m) => m.delete()); }
+}
+
 /**
- * Fotoğrafı şablon sayfasına hizalar.
+ * Fotoğrafı şablon sayfasına hizalar. Sonuçtaki `ok` güvenilirliği söyler: yanlış sayfaya/yere okumamak için
+ * ok=false ise çekim reddedilmelidir.
+ * 1) Doğrudan özellik eşleştirmesi (kâğıdı bulmadan, ölçek/döndürmeden bağımsız).
+ * 2) Kâğıt köşeleri → 4 yön × sayfa seçimi (yüksek geçirgen korelasyon) → ORB ince hizalama, olmazsa ECC.
  * @param {HTMLCanvasElement} photo
  * @param {HTMLCanvasElement[]} refs şablon sayfa görüntüleri (aynı ölçek)
  * @param {Float32Array[]} thumbs refThumbs(refs)
  * @param {number|null} expected beklenen sayfa (0 tabanlı) — null ise en iyi eşleşen seçilir
  */
 export function alignPage(cv, photo, refs, thumbs, expected = null) {
+  let d = null;
+  try { d = dogrudanHizala(cv, photo, refs, expected); } catch (e) { d = null; }
+  if (d && d.ok) {
+    let canvas = d.canvas, inliers = d.inliers;
+    try { const r = refineORB(cv, canvas, refs[d.page]); if (r) { canvas = r.canvas; inliers = Math.max(inliers, r.inliers); } } catch (e) { /* kaba hizalama kalır */ }
+    return { ok: true, canvas, page: d.page, score: 1, refined: true, inliers, paperFound: true, rot: 0, yontem: 'ozellik', ikinci: d.ikinci };
+  }
   let quad = findPaperCorners(cv, photo);
   const paperFound = !!quad;
   if (!quad) quad = [[0, 0], [photo.width, 0], [photo.width, photo.height], [0, photo.height]];
-  const o = bestOrientation(cv, photo, quad, thumbs, expected);
-  const q = quad.slice(o.rot).concat(quad.slice(0, o.rot));
-  const ref = refs[o.page];
-  let canvas = warpQuad(cv, photo, q, ref.width, ref.height);
-  let refined = false, inliers = 0;
-  try {
-    const r = refineORB(cv, canvas, ref);
-    if (r) { canvas = r.canvas; refined = true; inliers = r.inliers; }
-  } catch (e) { /* ince hizalama başarısız → kaba hizalama kalır */ }
-  return { canvas, page: o.page, score: o.score, refined, inliers, paperFound, rot: o.rot };
+  // En iyi birkaç (yön, sayfa) adayı gerçekten hizalanıp sınanır; ince hizalama sonucu en yüksek olan seçilir.
+  // Yanlış sayfa ORB'da az eşleşme, ECC'de düşük korelasyon verir.
+  const sonuclar = [];
+  for (const o of adayYonler(cv, photo, quad, thumbs, expected)) {
+    const q = quad.slice(o.rot).concat(quad.slice(0, o.rot));
+    const ref = refs[o.page];
+    const canvas = warpQuad(cv, photo, q, ref.width, ref.height);
+    let r = null;
+    try { r = refineORB(cv, canvas, ref); } catch (e) { r = null; }
+    if (r) { sonuclar.push({ q: 10 + r.inliers / 100, canvas: r.canvas, inliers: r.inliers, yontem: 'kose+orb', o }); continue; }
+    const e = refineECC(cv, canvas, ref);
+    if (e) sonuclar.push({ q: e.cc, canvas: e.canvas, inliers: 0, ecc: e.cc, yontem: 'kose+ecc', o });
+    else sonuclar.push({ q: 0, canvas, inliers: 0, ecc: 0, yontem: 'kose', o });
+  }
+  sonuclar.sort((x, y) => y.q - x.q);
+  const s = sonuclar[0], iki = sonuclar[1] ? sonuclar[1].q : 0;
+  const orb = s.q >= 10;
+  const ok = orb || (s.ecc >= 0.75 && s.q - iki >= 0.1); // ECC tek başına yanıltabilir (farklı sınavda bile ~0.55): yüksek eşik
+  return { ok, canvas: s.canvas, refined: ok, inliers: s.inliers, ecc: s.ecc || 0, yontem: s.yontem, page: s.o.page, score: s.o.score, margin: s.q - iki, paperFound, rot: s.o.rot, ozellikInliers: d ? d.inliers : 0 };
 }
 
 // ------------------------------------------------------------------ mürekkep (el yazısı) çıkarma

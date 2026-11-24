@@ -17,7 +17,7 @@ let scan = null; // { pages: {pageIdx: entries[]}, preview: {pageIdx: dataURL} }
 let busy = false;
 let tplFor = null; // şablonun ait olduğu sınav
 let pending = []; // şablon yokken çekilen sayfalar (PDF seçilince okunur)
-const SURUM = 'v10';
+const SURUM = 'v11';
 
 // ------------------------------------------------------------------ şablon deposu (IndexedDB; öğrenci verisi içermez, boş sınav kâğıdı)
 const db = () => new Promise((res, rej) => {
@@ -182,7 +182,7 @@ async function processCanvas(photo) {
   const warn = [];
   if (!al.paperFound) warn.push('kâğıdın kenarları bulunamadı');
   if (!al.refined) warn.push('ince hizalama yapılamadı');
-  if (al.score < 0.15 && !al.refined) return { rejected: true, warn }; // şablondaki hiçbir sayfaya benzemiyor
+  if (!al.ok) return { rejected: true, warn, al }; // hizalama güvenilir değil: yanlış yere okumamak için reddedilir
   const tp = tpl.template;
   const entries = [];
   const add = (id, label, box, numeric, extra = {}) => { const r = readBox(al.canvas, refs[al.page], box, S, net, { numeric }); entries.push({ id, label, box, ...extra, ...r }); };
