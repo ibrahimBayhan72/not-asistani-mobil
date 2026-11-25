@@ -18,7 +18,7 @@ let scan = null; // { pages: {pageIdx: entries[]}, preview: {pageIdx: dataURL} }
 let busy = false;
 let tplFor = null; // şablonun ait olduğu sınav
 let pending = []; // şablon yokken çekilen sayfalar (PDF seçilince okunur)
-const SURUM = 'v12';
+const SURUM = 'v13';
 
 // ------------------------------------------------------------------ şablon deposu (IndexedDB; öğrenci verisi içermez, boş sınav kâğıdı)
 const db = () => new Promise((res, rej) => {
@@ -179,7 +179,9 @@ function renderTara() {
 async function processCanvas(photo) {
   const [cv, net] = await Promise.all([loadCV(), loadNet()]);
   const refs = tpl.pages.map((p) => p.canvas);
-  const al = alignPage(cv, photo, refs, thumbs, null);
+  // 1. sayfadaki başlık (ad, numara, toplam kutusu) tüm sınavlarda aynı olduğundan doğrulamaya katılmaz
+  const tpx = tpl.template, govdeBas = refs.map((_, p) => { const f = [tpx.no, tpx.name, tpx.sinif, tpx.total].filter((b) => b && b.page === p); return f.length ? Math.max(...f.map((b) => (b.y + b.h) * S)) + 10 : 0; });
+  const al = alignPage(cv, photo, refs, thumbs, null, { govdeBas });
   const warn = [];
   if (!al.paperFound) warn.push('kâğıdın kenarları bulunamadı');
   if (!al.refined) warn.push('ince hizalama yapılamadı');
@@ -201,6 +203,12 @@ async function processCanvas(photo) {
   return { rejected: false, page: al.page, warn };
 }
 
+/** Reddedilen çekim için öğretmene ne yapacağını söyleyen mesaj */
+function redMesaji(r) {
+  if (r.al && r.al.neden === 'farkli') return `✖ Bu kâğıt seçili sınavın PDF'iyle eşleşmiyor (başlık aynı ama sorular farklı). Doğru sınavı/PDF'i seçtiğinizden emin olun.`;
+  return '✖ Sayfa tanınamadı. Telefonu kâğıda yaklaştırın (kâğıt çerçeveyi doldursun), gölge ve yansıma olmasın.';
+}
+
 /** Galeriden / telefonun kendi kamera uygulamasından gelen dosyalar (ikincil yol) */
 async function onPhotos(files) {
   const list = [...files]; for (const id of ['#kCekInput', '#kGaleriInput']) $(id).value = '';
@@ -218,7 +226,7 @@ async function onPhotos(files) {
       status(`Fotoğraf ${n + 1}/${list.length} işleniyor…`);
       await new Promise((r) => setTimeout(r, 30)); // arayüz güncellensin
       const r = await processCanvas(await photoToCanvas(f, 2000));
-      status(r.rejected ? '✖ Bu fotoğraf şablondaki hiçbir sayfaya benzemiyor; atlandı.' : `${r.page + 1}. sayfa okundu.${r.warn.length ? ' Dikkat: ' + r.warn.join(', ') + ' — emin değilseniz yeniden çekin.' : ''}`, r.rejected || r.warn.length > 0);
+      status(r.rejected ? redMesaji(r) + ' (fotoğraf atlandı)' : `${r.page + 1}. sayfa okundu.${r.warn.length ? ' Dikkat: ' + r.warn.join(', ') + ' — emin değilseniz yeniden çekin.' : ''}`, r.rejected || r.warn.length > 0);
     }
   } catch (err) {
     status('', false); $('#kHata').textContent = 'Fotoğraf işlenemedi: ' + (err && err.message ? err.message : err);
@@ -288,23 +296,67 @@ function closeCamera() {
   const o = $('#kKamera'); if (o) o.hidden = true;
   document.body.style.overflow = ''; document.body.classList.remove('kam-acik');
 }
+/**
+ * Çekilen kareyi olabildiğince yüksek çözünürlükte alır: video akışı telefonlarda çoğu zaman 1280×720/1920×1080 ile sınırlıdır,
+ * kâğıt kadrajda küçükse yazılar okunmaz. ImageCapture.takePhoto() (Android Chrome) kameranın tam çözünürlüklü fotoğrafını verir;
+ * yoksa/olmazsa video karesi kullanılır. Ardından ekrandaki kılavuz çerçevenin karşılığı (kenar payıyla) kırpılır.
+ */
+async function kareAl(v) {
+  const kare = mk(v.videoWidth, v.videoHeight); kare.getContext('2d').drawImage(v, 0, 0);
+  let src = kare, kaynak = 'video';
+  const track = stream && stream.getVideoTracks()[0];
+  if (track && typeof window.ImageCapture === 'function') {
+    try {
+      const ic = new ImageCapture(track);
+      const zaman = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('zaman aşımı')), ms));
+      const blob = await Promise.race([ic.takePhoto().catch(() => ic.takePhoto()), zaman(4000)]);
+      const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+      if (bmp.width * bmp.height > v.videoWidth * v.videoHeight) { // gerçekten daha büyükse kullan
+        src = mk(bmp.width, bmp.height); src.getContext('2d').drawImage(bmp, 0, 0); kaynak = 'foto';
+      }
+      bmp.close && bmp.close();
+    } catch (e) { /* video karesi kullanılır */ }
+  }
+  // kılavuz çerçeve → kaynak görüntü koordinatları (video object-fit: cover ile gösterilir)
+  try {
+    const vr = v.getBoundingClientRect(), gr = document.querySelector('.k-kadraj').getBoundingClientRect();
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const sc = Math.max(vr.width / vw, vr.height / vh), ox = (vr.width - vw * sc) / 2, oy = (vr.height - vh * sc) / 2;
+    const pay = 0.06; // kâğıt kenarı çerçeveden biraz taşsa da kesilmesin
+    let x0 = (gr.left - vr.left - ox) / sc / vw - pay, y0 = (gr.top - vr.top - oy) / sc / vh - pay;
+    let x1 = (gr.right - vr.left - ox) / sc / vw + pay, y1 = (gr.bottom - vr.top - oy) / sc / vh + pay;
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(1, x1); y1 = Math.min(1, y1);
+    // fotoğraf videoyla aynı yönde değilse (yatay/dikey) kırpma yapılmaz; farklı en/boy oranındaysa video, fotoğrafın ortasıdır
+    if ((src.width > src.height) === (vw > vh) && x1 - x0 > 0.3 && y1 - y0 > 0.3) {
+      const ar = vw / vh, sar = src.width / src.height;
+      let fw = src.width, fh = src.height, fx = 0, fy = 0;
+      if (sar > ar) { fw = src.height * ar; fx = (src.width - fw) / 2; } else if (sar < ar) { fh = src.width / ar; fy = (src.height - fh) / 2; }
+      const cx = fx + x0 * fw, cy = fy + y0 * fh, cw = (x1 - x0) * fw, ch = (y1 - y0) * fh;
+      const out = mk(Math.round(cw), Math.round(ch)); out.getContext('2d').drawImage(src, cx, cy, cw, ch, 0, 0, out.width, out.height);
+      src = out;
+    }
+  } catch (e) { /* kırpmadan devam */ }
+  return { canvas: scaleCanvas(src, 2400), kaynak };
+}
+
 async function shoot() {
   const v = $('#kVideo');
   if (camBusy) return;
   if (!stream || !v.videoWidth) { camStatus('Kamera hazırlanıyor, birkaç saniye bekleyip yeniden dokunun…'); return; }
   camBusy = true; $('#kKamCek').disabled = true;
   const fl = $('#kFlash'); fl.classList.add('on'); setTimeout(() => fl.classList.remove('on'), 80);
-  const frame = mk(v.videoWidth, v.videoHeight); frame.getContext('2d').drawImage(v, 0, 0);
-  camStatus('Okunuyor…');
+  camStatus('Çekiliyor…');
   try {
+    const { canvas: frame } = await kareAl(v);
+    camStatus('Okunuyor…');
     await new Promise((r) => setTimeout(r, 30));
     if (!tpl) { // şablon (PDF) henüz yok: sayfayı sakla, PDF seçilince okunur
-      pending.push(scaleCanvas(frame, 2000)); camInfo();
+      pending.push(frame); camInfo();
       camStatus(`✓ ${pending.length}. sayfa çekildi. Sıradaki sayfayı çekin; bitince "Bitti"ye basın.`);
       return;
     }
-    const r = await processCanvas(scaleCanvas(frame, 2000));
-    if (r.rejected) camStatus('✖ Sayfa tanınamadı. Kâğıdı çerçeveye alıp yeniden çekin.', true);
+    const r = await processCanvas(frame);
+    if (r.rejected) camStatus(redMesaji(r), true);
     else if (Object.keys(scan.pages).length >= tpl.pages.length) { closeCamera(); renderTara(); showResults(); return; }
     else { camInfo(); renderTara(); camStatus(`✓ ${r.page + 1}. sayfa okundu${r.warn.length ? ' (' + r.warn.join(', ') + ')' : ''}. Sıradaki sayfayı çekin.`, r.warn.length > 0); }
   } catch (e) {
@@ -322,6 +374,19 @@ function matchStudent(noText) {
   const cand = sts.map((s, i) => ({ i, d: editDistance(noText, s.no) })).filter((x) => x.d <= 1);
   return cand.length === 1 ? { idx: cand[0].i, exact: false } : { idx: -1 };
 }
+/** Türkçe harfleri sadeleştirip karşılaştırır ("Çelik" = "celik") */
+const sade = (t) => String(t || '').toLocaleLowerCase('tr').replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/i̇/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u').replace(/\s+/g, ' ').trim();
+/** Yazılan ada göre öğrenci: tam eşleşme ya da TEK aday (içeren) */
+function matchByName(ad) {
+  const q = sade(ad);
+  if (q.length < 2) return -1;
+  const sts = exam.students.map((st) => sade(st.name));
+  const tam = sts.indexOf(q);
+  if (tam >= 0) return tam;
+  const ic = sts.map((n, i) => (n.includes(q) ? i : -1)).filter((i) => i >= 0);
+  return ic.length === 1 ? ic[0] : -1;
+}
+let secili = -1; // sonuç ekranında puanların yazılacağı öğrenci (listedeki sıra)
 const all = () => Object.values(scan.pages).flat();
 
 function showResults() {
@@ -330,7 +395,9 @@ function showResults() {
   const toplam = en.find((e) => e.id === 'toplam');
   const m = matchStudent(no ? no.text : '');
   const crop = (e) => (e && e.crop ? `<img class="k-crop" src="${e.crop}" alt="">` : '<span class="k-crop none">—</span>');
-  const opts = exam.students.map((s, i) => `<option value="${i}" ${i === m.idx ? 'selected' : ''}>${esc(s.no)} — ${esc(s.name)}</option>`).join('');
+  secili = m.idx;
+  const liste = exam.students.map((s) => `<option value="${esc(s.name)}">${esc(s.no)}</option>`).join('');
+  const sec0 = secili >= 0 ? exam.students[secili] : null;
   const missingPages = tpl.pages.map((_, i) => i).filter((i) => !scan.pages[i]);
   const ad = en.find((e) => e.id === 'ad'), sinif = en.find((e) => e.id === 'sinif');
   // OYSS kuralı: her soru 0..max ve soruların toplamı = kâğıttaki toplam. Rakam tanıyıcının ikinci/üçüncü tahminleriyle
@@ -341,11 +408,14 @@ function showResults() {
   const okunanToplam = uz.ok ? uz.total : toplam ? toplam.text : '';
   $('#kSonucGovde').innerHTML = `
     ${missingPages.length ? `<p class="warnbox">${missingPages.map((i) => i + 1).join(', ')}. sayfa çekilmedi; o sayfadaki sorular boş kalır.</p>` : ''}
+    ${missingPages.includes(0) ? '<p class="warnbox">Öğrenci bilgileri yalnızca 1. sayfada; 1. sayfa çekilmediği için öğrenciyi ad ya da numarayla yazın.</p>' : ''}
     <div class="k-ogr">
-      <div class="k-row">${crop(no)}<label>Okunan numara<input id="kNo" inputmode="numeric" value="${esc(no ? no.text : '')}" autocomplete="off"></label></div>
-      <label>Öğrenci<select id="kOgr"><option value="-1">— seçin —</option>${opts}</select></label>
+      <div class="k-alan"><label>Öğrenci no<input id="kNo" inputmode="numeric" value="${esc(sec0 ? sec0.no : no ? no.text : '')}" autocomplete="off"></label>${crop(no)}</div>
+      <div class="k-alan"><label>Ad soyad<input id="kAd" list="kOgrListe" value="${esc(sec0 ? sec0.name : '')}" placeholder="Yazın ya da listeden seçin" autocomplete="off"></label>${crop(ad)}</div>
+      <div class="k-alan"><label>Sınıf / şube<input id="kSinif" value="${esc(exam.exam.sinifSube || '')}" autocomplete="off"></label>${crop(sinif)}</div>
+      <datalist id="kOgrListe">${liste}</datalist>
       <p id="kOgrDurum" class="k-not"></p>
-      ${ad || sinif ? `<div class="k-row">${crop(ad)}${crop(sinif)}<small>Kâğıttaki ad / sınıf (göz kontrolü)</small></div>` : ''}
+      <small class="k-not">Sağdaki küçük görüntüler kâğıtta yazandır; karşılaştırıp gerekirse düzeltin.</small>
     </div>
     <div class="k-sorular">${exam.questions.map((q, i) => {
       const e = en.find((x) => x.id === 's' + i);
@@ -378,21 +448,22 @@ function showResults() {
     else if (read === sum) box.innerHTML = `Hesaplanan <b>${sum}</b> = kâğıttaki <b>${read}</b> <span class="k-ok">✓ tutuyor</span>${uz.ok && uz.totalChanged ? `<br><small>Toplam kutusu "${esc(toplam.text)}" okunmuştu; sorularla uyumlu ${read} önerildi, kontrol edin.</small>` : ''}`;
     else box.innerHTML = `Hesaplanan <b>${sum}</b>, kâğıttaki <b>${read}</b> <span class="k-bad">✖ tutmuyor</span><br><small>Bir puan yanlış okunmuş ya da kâğıtta toplam hatalı olabilir.</small>`;
     // öğrenci
-    const sel = +$('#kOgr').value;
-    const st = sel >= 0 ? exam.students[sel] : null;
+    const st = secili >= 0 ? exam.students[secili] : null;
     const has = st && st.scores.some((x) => String(x ?? '').trim() !== '');
-    $('#kOgrDurum').innerHTML = !st ? '⚠ Öğrenciyi seçin.' : (m.exact === false && +$('#kNo').value === +(no ? no.text : '') ? '≈ Numara tam eşleşmedi; en yakın öğrenci seçildi, kontrol edin.' : '') + (has ? ' <b>Bu öğrencinin kayıtlı puanları var; kaydedince değişir.</b>' : '');
+    $('#kOgrDurum').innerHTML = !st ? '⚠ Listede bulunamadı: numarayı ya da adı düzeltin.'
+      : `✓ Listede: <b>${esc(st.no)} · ${esc(st.name)}</b>` + (m.exact === false && secili === m.idx ? ' <br>≈ Kâğıtta okunan numara (' + esc(no ? no.text : '') + ') tam eşleşmedi; en yakın öğrenci seçildi, kontrol edin.' : '') + (has ? ' <br><b>Bu öğrencinin kayıtlı puanları var; kaydedince değişir.</b>' : '');
     $('#kKaydet').disabled = !st || bad > 0;
     $('#kKaydet').textContent = st ? `💾 ${st.no} ${st.name} için kaydet` : '💾 Kaydet';
   };
   inputs.forEach((i) => i.addEventListener('input', refresh));
-  $('#kOgr').onchange = refresh;
-  $('#kNo').oninput = () => { const mm = matchStudent($('#kNo').value.trim()); if (mm.idx >= 0) $('#kOgr').value = String(mm.idx); refresh(); };
+  // numara yazılınca ad, ad yazılınca numara listeden doldurulur
+  $('#kNo').oninput = () => { const mm = matchStudent($('#kNo').value.trim()); secili = mm.exact ? mm.idx : -1; if (secili >= 0) $('#kAd').value = exam.students[secili].name; refresh(); };
+  $('#kAd').oninput = () => { secili = matchByName($('#kAd').value); if (secili >= 0) $('#kNo').value = exam.students[secili].no; refresh(); };
   refresh();
 }
 
 async function saveResults() {
-  const sel = +$('#kOgr').value;
+  const sel = secili;
   const st = exam.students[sel];
   if (!st) return;
   const scores = exam.questions.map((_, i) => { const inp = document.querySelector(`#kSonucGovde input[data-i="${i}"]`); return inp && !inp.disabled ? inp.value.trim() : (st.scores[i] ?? ''); });

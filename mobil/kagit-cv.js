@@ -349,6 +349,41 @@ function dogrudanHizala(cv, photo, refs, beklenen) {
   } finally { A.des.delete(); }
 }
 
+// ------------------------------------------------------------------ gövde uyumu (yanlış sınav kâğıdını reddetme)
+// Okulun tüm sınavlarında başlık (logo, yıl, "Adı ve Soyadı" satırı, alt bilgi) aynıdır; özellik eşleştirmesi yalnızca başlığa
+// tutunup BAŞKA bir sınavın kâğıdını kabul edebilir. Hizalamadan sonra şablonun gövdesindeki (başlık ve alt bilgi hariç) basılı
+// piksellerin fotoğrafta da aynı yerde koyu olup olmadığı ölçülür: doğru kâğıtta oran yüksek, başka sınavda düşüktür.
+/**
+ * @param {HTMLCanvasElement} aligned şablon boyutuna hizalanmış fotoğraf
+ * @param {HTMLCanvasElement} ref şablon sayfası
+ * @param {number} [yBas] gövdenin başladığı satır (ref pikseli); üstü (başlık) sayılmaz
+ * @returns {number|null} 0..1; şablonda yeterli basılı içerik yoksa null
+ */
+export function govdeUyumu(aligned, ref, yBas = 0) {
+  // Yarım ölçekte yüksek geçiren filtre (ışık/gölge atılır) + hafif bulanıklık (birkaç piksellik hizalama hatasına tolerans),
+  // sonra gövde bölgesinde normalleştirilmiş korelasyon. Başka sınavda metin satırları farklı yerde → korelasyon düşük.
+  const w = Math.round(ref.width / 2), h = Math.round(ref.height / 2);
+  const hp = (cnv) => {
+    const c = mk(w, h), g = c.getContext('2d'); g.drawImage(cnv, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, l = new Float32Array(w * h);
+    for (let i = 0; i < l.length; i++) l[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+    const bl = boxBlur(l, w, h, 8);
+    for (let i = 0; i < l.length; i++) l[i] -= bl[i];
+    return boxBlur(l, w, h, 2);
+  };
+  const a = hp(aligned), r = hp(ref);
+  const y0 = Math.max(0, Math.round(yBas / 2)), y1 = Math.round(h * 0.93); // alt bilgi (sayfa no, telif satırı) her sınavda aynı
+  let n = 0, sa = 0, sr = 0;
+  for (let y = y0; y < y1; y++) for (let x = 0; x < w; x++) { const i = y * w + x; sa += a[i]; sr += r[i]; n++; }
+  if (n < 1000) return null;
+  const ma = sa / n, mr = sr / n;
+  let ab = 0, aa = 0, rr = 0;
+  for (let y = y0; y < y1; y++) for (let x = 0; x < w; x++) { const i = y * w + x, p = a[i] - ma, q = r[i] - mr; ab += p * q; aa += p * p; rr += q * q; }
+  if (rr < n * 0.5) return null; // şablon gövdesi neredeyse boş: doğrulanamaz
+  return ab / Math.sqrt(aa * rr || 1);
+}
+export const GOVDE_ESIK = 0.3; // ölçüm: başka sınav ≤ 0.19 (kusursuz hizada bile), aynı sayfa ≥ 0.67
+
 /**
  * Fotoğrafı şablon sayfasına hizalar. Sonuçtaki `ok` güvenilirliği söyler: yanlış sayfaya/yere okumamak için
  * ok=false ise çekim reddedilmelidir.
@@ -361,7 +396,16 @@ function dogrudanHizala(cv, photo, refs, beklenen) {
  * @param {Float32Array[]} thumbs refThumbs(refs)
  * @param {number|null} expected beklenen sayfa (0 tabanlı) — null ise en iyi eşleşen seçilir
  */
-export function alignPage(cv, photo, refs, thumbs, expected = null) {
+export function alignPage(cv, photo, refs, thumbs, expected = null, { govdeBas = [] } = {}) {
+  const sonuc = alignPage0(cv, photo, refs, thumbs, expected);
+  if (sonuc.ok) {
+    const g = govdeUyumu(sonuc.canvas, refs[sonuc.page], govdeBas[sonuc.page] || 0);
+    sonuc.govde = g == null ? null : +g.toFixed(3);
+    if (g != null && g < GOVDE_ESIK) { sonuc.ok = false; sonuc.neden = 'farkli'; } // başlık tuttu ama gövde tutmadı: başka sınav
+  } else sonuc.neden = 'tanınmadı';
+  return sonuc;
+}
+function alignPage0(cv, photo, refs, thumbs, expected) {
   let d = null;
   try { d = dogrudanHizala(cv, photo, refs, expected); } catch (e) { d = null; }
   if (d && d.ok) {

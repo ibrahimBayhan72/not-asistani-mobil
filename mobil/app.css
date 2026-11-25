@@ -168,6 +168,10 @@ dialog.ask .row { margin-top: 14px; justify-content: flex-end; }
 .k-row label { flex: 1; font-weight: 600; font-size: 13px; }
 .k-ogr label { display: grid; gap: 4px; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .k-ogr select { font: inherit; padding: 10px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; width: 100%; }
+.k-alan { display: flex; gap: 10px; align-items: flex-end; }
+.k-alan label { flex: 1; min-width: 0; }
+.k-alan input { font: inherit; font-weight: 400; padding: 10px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; width: 100%; box-sizing: border-box; }
+.k-alan .k-crop { height: 44px; max-width: 40%; margin-bottom: 6px; }
 .k-crop { height: 56px; max-width: 46%; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; flex: none; }
 .k-crop.none { display: inline-flex; align-items: center; justify-content: center; min-width: 70px; color: var(--muted); font-size: 12px; }
 .k-soru { display: grid; grid-template-columns: 78px auto 70px 1fr; gap: 8px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px; margin-bottom: 6px; }
